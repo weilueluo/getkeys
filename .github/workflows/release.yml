@@ -1,0 +1,74 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+  live:
+    needs: checks
+    runs-on: windows-latest
+    timeout-minutes: 45
+    environment: live-sandbox
+    concurrency:
+      group: getkeys-live-sandbox
+      cancel-in-progress: false
+    env:
+      GETKEYS_LIVE_ALLOW_WRITES: 'true'
+      GETKEYS_LIVE_GITHUB_TOKEN: ${{ secrets.GETKEYS_LIVE_GITHUB_TOKEN }}
+      GETKEYS_LIVE_GITHUB_REPO: ${{ vars.GETKEYS_LIVE_GITHUB_REPO }}
+      GETKEYS_LIVE_AWS_ACCESS_KEY_ID: ${{ secrets.GETKEYS_LIVE_AWS_ACCESS_KEY_ID }}
+      GETKEYS_LIVE_AWS_SECRET_ACCESS_KEY: ${{ secrets.GETKEYS_LIVE_AWS_SECRET_ACCESS_KEY }}
+      GETKEYS_LIVE_AWS_SESSION_TOKEN: ${{ secrets.GETKEYS_LIVE_AWS_SESSION_TOKEN }}
+      GETKEYS_LIVE_AWS_USER: ${{ vars.GETKEYS_LIVE_AWS_USER }}
+      GETKEYS_LIVE_SUPABASE_TOKEN: ${{ secrets.GETKEYS_LIVE_SUPABASE_TOKEN }}
+      GETKEYS_LIVE_SUPABASE_PROJECT: ${{ vars.GETKEYS_LIVE_SUPABASE_PROJECT }}
+      GETKEYS_LIVE_VERCEL_TOKEN: ${{ secrets.GETKEYS_LIVE_VERCEL_TOKEN }}
+      GETKEYS_LIVE_VERCEL_PROJECT: ${{ vars.GETKEYS_LIVE_VERCEL_PROJECT }}
+      GETKEYS_LIVE_VERCEL_TEAM_ID: ${{ vars.GETKEYS_LIVE_VERCEL_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - shell: pwsh
+        run: |
+          'PERL=C:\Strawberry\perl\bin\perl.exe' >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npm run test:live
+  package:
+    needs: [checks, live]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - shell: pwsh
+        run: |
+          'PERL=C:\Strawberry\perl\bin\perl.exe' >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npm run desktop -- build
+      - name: Publish the tested installer and signed marketplace
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = @(Get-ChildItem target/release/bundle/nsis/*.exe | ForEach-Object FullName)
+          $files += @(Get-ChildItem registry/dist/* | ForEach-Object FullName)
+          gh release create $env:GITHUB_REF_NAME @files --generate-notes

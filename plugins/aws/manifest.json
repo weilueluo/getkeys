@@ -1,0 +1,15 @@
+{
+  "id": "official.aws", "name": "AWS", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
+  "description": "Sign in with IAM Identity Center and manage IAM access keys.", "homepage": "https://aws.amazon.com",
+  "hosts": ["iam.amazonaws.com", "sts.amazonaws.com"], "auth": { "kind": "aws_sso" },
+  "operations": ["identity", "list_resources", "list_credentials", "create_credential", "validate_credential", "deactivate_credential", "revoke_credential"],
+  "fields": [
+    {"key":"start_url","label":"IAM Identity Center start URL","placeholder":"https://your-company.awsapps.com/start","required":true},
+    {"key":"region","label":"SSO region","placeholder":"eu-west-2","required":true}
+  ],
+  "credential_fields": [
+    {"key":"access_key_id","label":"Access key ID","placeholder":"AKIA…","required":true},
+    {"key":"secret_access_key","label":"Secret access key","placeholder":"Paste the secret value","required":true},
+    {"key":"session_token","label":"Session token (optional)","placeholder":"Only for temporary credentials","required":false}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "official.supabase", "name": "Supabase", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
+  "description": "Find project keys and rotate server credentials.", "homepage": "https://supabase.com",
+  "hosts": ["api.supabase.com", "*.supabase.co"],
+  "auth": { "kind": "broker", "registration": "supabase" },
+  "operations": ["identity", "list_resources", "list_credentials", "read_credential", "create_credential", "validate_credential", "revoke_credential"], "fields": [],
+  "credential_fields": [{"key":"token","label":"Project API key","placeholder":"sb_secret_…","required":true}]
+}

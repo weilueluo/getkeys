@@ -1,0 +1,10 @@
+node_modules/
+target/
+.local/
+registry/dist/
+apps/desktop/dist/
+apps/desktop/src/types.ts
+apps/desktop/src-tauri/icons/
+artifacts/
+playwright-report/
+test-results/

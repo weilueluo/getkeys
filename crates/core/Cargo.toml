@@ -1,0 +1,36 @@
+[package]
+name = "getkeys-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+getkeys-plugin-api.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+base64.workspace = true
+sha2.workspace = true
+hex.workspace = true
+getrandom.workspace = true
+zeroize.workspace = true
+reqwest.workspace = true
+time.workspace = true
+ts-rs.workspace = true
+extism = { version = "1.30.0", default-features = false, features = ["wasmtime-default-features"] }
+rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher-vendored-openssl"] }
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+ed25519-dalek = "2"
+aws-sigv4 = "1"
+aws-credential-types = "1"
+crypto_box = { version = "0.9", features = ["seal", "std"] }
+rand = "0.8"
+age = "0.11"
+directories = "6"
+open = "5"
+
+[dev-dependencies]
+tempfile.workspace = true
+wat = "1"

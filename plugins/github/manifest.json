@@ -1,0 +1,8 @@
+{
+  "id": "official.github", "name": "GitHub", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
+  "description": "Connect repositories, store tokens, and update Actions secrets.", "homepage": "https://github.com",
+  "hosts": ["api.github.com", "github.com"],
+  "auth": { "kind": "device", "device_url": "https://github.com/login/device/code", "token_url": "https://github.com/login/oauth/access_token", "client_id_env": "GETKEYS_GITHUB_CLIENT_ID", "scopes": "repo read:user" },
+  "operations": ["identity", "list_resources", "list_credentials", "validate_credential", "write_secret", "guide"], "fields": [],
+  "credential_fields": [{"key":"token","label":"Personal access token","placeholder":"github_pat_…","required":true}]
+}

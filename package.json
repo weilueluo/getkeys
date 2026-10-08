@@ -1,0 +1,29 @@
+{
+  "name": "getkeys",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @getkeys/desktop",
+    "build": "npm run build --workspace @getkeys/desktop",
+    "typecheck": "npm run typecheck --workspace @getkeys/desktop",
+    "test": "npm run test --workspace @getkeys/desktop",
+    "test:e2e": "playwright test",
+    "test:packaged": "playwright test --config playwright.packaged.config.ts",
+    "desktop": "node scripts/desktop.mjs",
+    "plugins:build": "node scripts/build-plugins.mjs",
+    "types": "node scripts/types.mjs",
+    "test:live": "node scripts/live.mjs",
+    "format": "prettier --write apps/desktop/src tests scripts playwright*.config.ts apps/desktop/vite.config.ts",
+    "format:check": "prettier --check apps/desktop/src tests scripts playwright*.config.ts apps/desktop/vite.config.ts",
+    "check": "node scripts/check.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.64.0",
+    "prettier": "^3.9.9"
+  }
+}

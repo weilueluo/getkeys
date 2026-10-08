@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "manifest": {
+        "id": "official.aws",
+        "name": "AWS",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "api_version": 1,
+        "description": "Sign in with IAM Identity Center and manage IAM access keys.",
+        "homepage": "https://aws.amazon.com",
+        "hosts": [
+          "iam.amazonaws.com",
+          "sts.amazonaws.com"
+        ],
+        "auth": {
+          "kind": "aws_sso"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "create_credential",
+          "validate_credential",
+          "deactivate_credential",
+          "revoke_credential"
+        ],
+        "fields": [
+          {
+            "key": "start_url",
+            "label": "IAM Identity Center start URL",
+            "placeholder": "https://your-company.awsapps.com/start",
+            "required": true
+          },
+          {
+            "key": "region",
+            "label": "SSO region",
+            "placeholder": "eu-west-2",
+            "required": true
+          }
+        ],
+        "credential_fields": [
+          {
+            "key": "access_key_id",
+            "label": "Access key ID",
+            "placeholder": "AKIA…",
+            "required": true
+          },
+          {
+            "key": "secret_access_key",
+            "label": "Secret access key",
+            "placeholder": "Paste the secret value",
+            "required": true
+          },
+          {
+            "key": "session_token",
+            "label": "Session token (optional)",
+            "placeholder": "Only for temporary credentials",
+            "required": false
+          }
+        ]
+      },
+      "wasm": "official.aws-0.1.0.wasm",
+      "sha256": "169186853335f66c6b52ae3034da64b4440d2b1d49ababd4fa23860b72f7f407"
+    },
+    {
+      "manifest": {
+        "id": "official.github",
+        "name": "GitHub",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "api_version": 1,
+        "description": "Connect repositories, store tokens, and update Actions secrets.",
+        "homepage": "https://github.com",
+        "hosts": [
+          "api.github.com",
+          "github.com"
+        ],
+        "auth": {
+          "kind": "device",
+          "device_url": "https://github.com/login/device/code",
+          "token_url": "https://github.com/login/oauth/access_token",
+          "client_id_env": "GETKEYS_GITHUB_CLIENT_ID",
+          "scopes": "repo read:user"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "validate_credential",
+          "write_secret",
+          "guide"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Personal access token",
+            "placeholder": "github_pat_…",
+            "required": true
+          }
+        ]
+      },
+      "wasm": "official.github-0.1.0.wasm",
+      "sha256": "c845072804f0405a6697b7c874c34db4e45d167d2e8ff4e6fc68ec17ecf13746"
+    },
+    {
+      "manifest": {
+        "id": "official.supabase",
+        "name": "Supabase",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "api_version": 1,
+        "description": "Find project keys and rotate server credentials.",
+        "homepage": "https://supabase.com",
+        "hosts": [
+          "api.supabase.com",
+          "*.supabase.co"
+        ],
+        "auth": {
+          "kind": "broker",
+          "registration": "supabase"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "read_credential",
+          "create_credential",
+          "validate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Project API key",
+            "placeholder": "sb_secret_…",
+            "required": true
+          }
+        ]
+      },
+      "wasm": "official.supabase-0.1.0.wasm",
+      "sha256": "f58381e94c9f2320080688c7696a134b91bdb78c3cfb09a04d5f350bf0b4c559"
+    },
+    {
+      "manifest": {
+        "id": "official.vercel",
+        "name": "Vercel",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "api_version": 1,
+        "description": "Keep project tokens and deliver secrets to your deployments.",
+        "homepage": "https://vercel.com",
+        "hosts": [
+          "api.vercel.com",
+          "vercel.com"
+        ],
+        "auth": {
+          "kind": "broker",
+          "registration": "vercel"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "validate_credential",
+          "write_secret",
+          "guide"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Access token",
+            "placeholder": "Paste the token value",
+            "required": true
+          }
+        ]
+      },
+      "wasm": "official.vercel-0.1.0.wasm",
+      "sha256": "8b5e709cf20c6cda69a39e85aee9490aa93f9244afa8b08fd9e48efbec1e60be"
+    }
+  ]
+}

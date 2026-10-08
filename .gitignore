@@ -1,0 +1,17 @@
+/target/
+node_modules/
+/apps/desktop/dist/
+/apps/desktop/src-tauri/gen/
+/apps/desktop/src-tauri/icons/android/
+/apps/desktop/src-tauri/icons/ios/
+/test-results/
+/playwright-report/
+/artifacts/
+/.local/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.age

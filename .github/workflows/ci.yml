@@ -1,0 +1,48 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Select Strawberry Perl for vendored OpenSSL
+        shell: pwsh
+        run: |
+          $perl = 'C:\Strawberry\perl\bin\perl.exe'
+          if (!(Test-Path -LiteralPath $perl)) { throw 'Strawberry Perl is required' }
+          "PERL=$perl" >> $env:GITHUB_ENV
+      - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm run check
+      - name: Verify generated contracts are committed
+        run: git diff --exit-code -- apps/desktop/src/types.ts
+      - name: Validate Windows installer packaging
+        run: npm run desktop -- build --debug
+      - name: Test the packaged app without a development server
+        run: npm run test:packaged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-evidence
+          path: |
+            artifacts/
+            playwright-report/
+            test-results/
+          retention-days: 7
