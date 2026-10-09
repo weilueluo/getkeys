@@ -31,7 +31,7 @@ pub fn validate_url(value: &str, hosts: &[String]) -> Result<url::Url> {
                 host == allowed
             }
         }),
-        "Plugin requested a host outside its declared permissions"
+        "Provider requested a host outside its declared permissions"
     );
     Ok(url)
 }
@@ -79,7 +79,7 @@ impl Transport {
                 .keys()
                 .any(|h| ["authorization", "cookie", "host"]
                     .contains(&h.to_ascii_lowercase().as_str())),
-            "Plugin cannot override authentication or routing headers"
+            "Provider cannot override authentication or routing headers"
         );
         let service = input.headers.remove("x-getkeys-aws-service");
         let auth_header = input.headers.remove("x-getkeys-auth-header");

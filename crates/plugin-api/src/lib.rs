@@ -19,7 +19,18 @@ pub struct Manifest {
     pub auth: AuthMethod,
     pub operations: Vec<OperationKind>,
     pub fields: Vec<ConfigField>,
+    /// Fields of keys listed under a resource, in display order.
     pub credential_fields: Vec<ConfigField>,
+    /// Fields of the account's own sign-in key, which can also be pasted to connect.
+    #[serde(default)]
+    pub account_fields: Vec<ConfigField>,
+    /// Provider page where a user creates a token to paste.
+    #[serde(default)]
+    pub token_page: String,
+    /// The account's own access tokens are listed, created and revoked under resource `""`.
+    /// A token the plugin lists with credential type `sign_in` is the one the connection uses.
+    #[serde(default)]
+    pub account_credentials: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
@@ -41,8 +52,20 @@ pub enum AuthMethod {
 pub struct ConfigField {
     pub key: String,
     pub label: String,
+    #[serde(default)]
     pub placeholder: String,
+    #[serde(default)]
     pub required: bool,
+    /// Masked until revealed. Values not marked secret are shown as they are.
+    #[serde(default = "secret_by_default")]
+    pub secret: bool,
+    /// Environment variable used when exporting this field, if any.
+    #[serde(default)]
+    pub env: String,
+}
+
+fn secret_by_default() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, TS)]
@@ -222,6 +245,9 @@ pub struct RemoteCredential {
     pub expires_at: Option<String>,
     pub value: Option<SecretValue>,
     pub can_rotate: bool,
+    /// Non-secret facts about the key, such as its ID, status, or endpoint.
+    #[serde(default)]
+    pub details: BTreeMap<String, String>,
 }
 
 pub fn get(url: String) -> HttpRequest {

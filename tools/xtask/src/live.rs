@@ -76,8 +76,11 @@ pub fn run() -> Result<()> {
                 name: "Live sandbox".into(),
                 state: ConnectionState::Connected,
                 config,
+                source: None,
             },
             identity_id: "live-test".into(),
+            linked: Vec::new(),
+            dedicated: None,
             auth,
         };
         app.vault.put("connection", provider, &c)?;

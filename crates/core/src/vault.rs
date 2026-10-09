@@ -4,13 +4,15 @@ use rusqlite::{Connection as Sqlite, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     time::Duration,
 };
 use zeroize::Zeroizing;
 
 pub struct Vault {
     pub(crate) db: Sqlite,
+    path: PathBuf,
+    key: Zeroizing<[u8; 32]>,
 }
 
 impl Vault {
@@ -18,6 +20,15 @@ impl Vault {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        let db = Self::connect(path, key)?;
+        db.execute_batch("CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id)); CREATE TABLE IF NOT EXISTS rotations (id TEXT PRIMARY KEY, scope TEXT NOT NULL, active INTEGER NOT NULL, data TEXT NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS one_active_rotation ON rotations(scope) WHERE active=1; PRAGMA user_version=1;")?;
+        Ok(Self {
+            db,
+            path: path.to_owned(),
+            key: Zeroizing::new(*key),
+        })
+    }
+    fn connect(path: &Path, key: &[u8; 32]) -> Result<Sqlite> {
         let db = Sqlite::open(path)?;
         db.pragma_update(None, "key", format!("x'{}'", hex::encode(key)))?;
         let cipher: String = db
@@ -26,7 +37,7 @@ impl Vault {
         ensure!(!cipher.is_empty(), "SQLCipher is unavailable");
         db.pragma_update(None, "temp_store", "MEMORY")?;
         db.pragma_update(None, "foreign_keys", "ON")?;
-        db.busy_timeout(Duration::from_secs(5))?;
+        db.busy_timeout(Duration::from_secs(30))?;
         let version: i64 = db
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .context("The vault key is wrong or the vault is damaged")?;
@@ -34,8 +45,28 @@ impl Vault {
             version <= 1,
             "This vault was created by a newer GetKeys version"
         );
-        db.execute_batch("CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id)); CREATE TABLE IF NOT EXISTS rotations (id TEXT PRIMARY KEY, scope TEXT NOT NULL, active INTEGER NOT NULL, data TEXT NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS one_active_rotation ON rotations(scope) WHERE active=1; PRAGMA user_version=1;")?;
-        Ok(Self { db })
+        // Readers keep working while another connection (a parallel refresh) writes.
+        db.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0))?;
+        Ok(db)
+    }
+    /// Another connection to the same vault, so slow provider calls can run side by side.
+    pub fn fork(&self) -> Result<Self> {
+        Ok(Self {
+            db: Self::connect(&self.path, &self.key)?,
+            path: self.path.clone(),
+            key: self.key.clone(),
+        })
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    /// A transaction that takes the write lock up front, so parallel writers wait for each
+    /// other instead of failing when a read turns into a write.
+    pub(crate) fn write(&self) -> Result<rusqlite::Transaction<'_>> {
+        Ok(rusqlite::Transaction::new_unchecked(
+            &self.db,
+            rusqlite::TransactionBehavior::Immediate,
+        )?)
     }
     pub fn system(path: &Path) -> Result<Self> {
         let account = path.to_string_lossy();
@@ -129,7 +160,7 @@ impl Vault {
         expected: &RotationState,
         next: RotationState,
     ) -> Result<()> {
-        let transaction = self.db.unchecked_transaction()?;
+        let transaction = self.write()?;
         let current = self.rotation(&r.id)?;
         ensure!(
             &current.state == expected,
@@ -190,7 +221,7 @@ impl Vault {
         let records: Vec<(String, String, String)> =
             serde_json::from_value(payload["records"].clone())?;
         let rotations: Vec<Rotation> = serde_json::from_value(payload["rotations"].clone())?;
-        let transaction = self.db.unchecked_transaction()?;
+        let transaction = self.write()?;
         for (kind, id, data) in records {
             ensure!(
                 ["connection", "credential", "binding", "activity"].contains(&kind.as_str()),

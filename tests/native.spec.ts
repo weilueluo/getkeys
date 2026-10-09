@@ -29,7 +29,10 @@ test.beforeAll(async () => {
     GETKEYS_REGISTRY: resolve('registry/dist'),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
     WEBVIEW2_USER_DATA_FOLDER: resolve(data, 'webview'),
+    // Hide this machine's GitHub CLI sign-in so adding GitHub falls back to a pasted token.
+    GH_CONFIG_DIR: resolve(data, 'gh'),
   };
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN']) delete env[name];
   delete env.GETKEYS_GITHUB_CLIENT_ID;
   delete env.GETKEYS_BROKER_URL;
   if (test.info().project.metadata.packaged) delete env.GETKEYS_REGISTRY;
@@ -68,16 +71,21 @@ test.afterAll(async () => {
     });
 });
 test('real native IPC installs a signed plugin and uses an encrypted OS-keyed vault', async () => {
-  await expect(page.getByRole('heading', { name: 'One place for every key.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
   if (test.info().project.metadata.packaged)
     expect(page.url()).toMatch(/^(http:\/\/tauri\.localhost|tauri:\/\/localhost)/);
-  await expect(page.locator('.plugin-card')).toHaveCount(4);
+  await expect(page.locator('.provider-card')).toHaveCount(4);
   const github = page
-    .locator('.plugin-card')
+    .locator('.provider-card')
     .filter({ has: page.getByRole('heading', { name: 'GitHub', exact: true }) });
-  await github.getByRole('button', { name: /Add plugin|Connect/ }).click();
-  await expect(page.getByRole('alert')).toContainText('GETKEYS_GITHUB_CLIENT_ID');
-  await expect(github.getByText('Installed', { exact: true })).toBeVisible();
+  await github.getByRole('button', { name: 'Add', exact: true }).click();
+  // No sign-in on this device, so the scan finds nothing and GetKeys asks for a token.
+  const dialog = page.getByRole('dialog', { name: 'Connect GitHub' });
+  await dialog.getByLabel('Token', { exact: true }).fill('not-a-real-token');
+  await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press('Escape');
+  await expect(github.getByRole('button', { name: 'Add', exact: true })).toBeVisible();
   await page.screenshot({ path: 'artifacts/native-app.png', fullPage: true });
   const header = readFileSync(resolve(data, 'vault.db')).subarray(0, 16).toString();
   expect(header).not.toBe('SQLite format 3\0');

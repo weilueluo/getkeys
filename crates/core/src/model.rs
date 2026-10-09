@@ -8,6 +8,8 @@ pub struct PluginView {
     pub manifest: Manifest,
     pub installed: bool,
     pub update_available: bool,
+    /// Browser sign-in works only when its OAuth registration is configured.
+    pub browser_sign_in: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -17,6 +19,9 @@ pub struct ConnectionView {
     pub name: String,
     pub state: ConnectionState,
     pub config: BTreeMap<String, String>,
+    /// Local session it was imported from (see discover.rs), `token` when pasted, none for sign-in.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS, PartialEq)]
@@ -32,7 +37,18 @@ pub struct Connection {
     pub view: ConnectionView,
     pub identity_id: String,
     pub auth: AuthMaterial,
+    /// Every local session that resolved to this account, so none of them is offered again.
+    #[serde(default)]
+    pub linked: Vec<String>,
+    /// Provider ID of the access token GetKeys created for itself, revoked when disconnecting.
+    #[serde(default)]
+    pub dedicated: Option<String>,
 }
+
+/// `ConnectionView::source` of an account that signs in with a token GetKeys created for itself.
+pub const DEDICATED: &str = "getkeys";
+/// `ConnectionView::source` of an account connected with a pasted token.
+pub const PASTED: &str = "token";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -78,12 +94,44 @@ pub struct CredentialView {
     pub value_available: bool,
     pub can_rotate: bool,
     pub retired: bool,
+    /// Every field of the key in the plugin's display order. Secret values are never included.
+    #[serde(default)]
+    pub fields: Vec<KeyField>,
+    /// Display name of `resource`, such as a repository or project name.
+    #[serde(default)]
+    pub resource_name: String,
+    /// Groups the person filed this key under, which scope Export and Refresh.
+    #[serde(default)]
+    pub groups: Vec<String>,
+    /// Why the key no longer works, such as being revoked or expired. None when it works or
+    /// hasn't been checked.
+    #[serde(default)]
+    pub problem: Option<String>,
 }
+
+/// One labelled part of a key, such as an access key ID, secret, region, or account ID.
+#[derive(Clone, Debug, Serialize, Deserialize, TS, PartialEq)]
+pub struct KeyField {
+    pub key: String,
+    pub label: String,
+    /// Environment variable used by "Copy as .env"; empty when the field is not exported.
+    pub env: String,
+    pub secret: bool,
+    /// The value itself for non-secret fields. Secret values are read through `reveal` or copy.
+    pub value: Option<String>,
+    /// Whether this device holds the value.
+    pub available: bool,
+}
+
+/// The credential type of the key an account connected with.
+pub const SIGN_IN: &str = "sign_in";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Credential {
     pub view: CredentialView,
     pub value: Option<SecretValue>,
+    #[serde(default)]
+    pub details: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -159,6 +207,16 @@ pub struct Activity {
     pub subject: String,
 }
 
+/// What deleting a key did.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Deletion {
+    /// The provider revoked it, or it only existed here.
+    Deleted,
+    /// The provider can't revoke it through its API; its page was opened to do it there.
+    Manual { url: String },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Snapshot {
     pub plugins: Vec<PluginView>,
@@ -167,7 +225,8 @@ pub struct Snapshot {
     pub bindings: Vec<Binding>,
     pub rotations: Vec<Rotation>,
     pub activity: Vec<Activity>,
-    pub setup: Vec<String>,
+    /// Where the encrypted vault file lives.
+    pub vault_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -195,6 +254,23 @@ pub struct RoleChoice {
     pub account_id: String,
     pub account_name: String,
     pub role: String,
+}
+
+/// One line of an exported `.env` file.
+#[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct EnvLine {
+    pub credential_id: String,
+    pub field: String,
+    pub variable: String,
+}
+
+/// A field of a key that belongs to no provider.
+#[derive(Clone, Deserialize, Serialize, TS)]
+pub struct CustomField {
+    /// Variable name the value is exported as, such as OPENAI_API_KEY.
+    pub variable: String,
+    pub value: String,
+    pub secret: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize, TS)]

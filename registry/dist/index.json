@@ -31,13 +31,17 @@
             "key": "start_url",
             "label": "IAM Identity Center start URL",
             "placeholder": "https://your-company.awsapps.com/start",
-            "required": true
+            "required": true,
+            "secret": false,
+            "env": ""
           },
           {
             "key": "region",
             "label": "SSO region",
             "placeholder": "eu-west-2",
-            "required": true
+            "required": true,
+            "secret": false,
+            "env": ""
           }
         ],
         "credential_fields": [
@@ -45,24 +49,74 @@
             "key": "access_key_id",
             "label": "Access key ID",
             "placeholder": "AKIA…",
-            "required": true
+            "required": true,
+            "secret": false,
+            "env": "AWS_ACCESS_KEY_ID"
           },
           {
             "key": "secret_access_key",
             "label": "Secret access key",
             "placeholder": "Paste the secret value",
-            "required": true
+            "required": true,
+            "secret": true,
+            "env": "AWS_SECRET_ACCESS_KEY"
           },
           {
             "key": "session_token",
-            "label": "Session token (optional)",
+            "label": "Session token",
             "placeholder": "Only for temporary credentials",
-            "required": false
+            "required": false,
+            "secret": true,
+            "env": "AWS_SESSION_TOKEN"
           }
-        ]
+        ],
+        "account_fields": [
+          {
+            "key": "access_key_id",
+            "label": "Access key ID",
+            "placeholder": "AKIA…",
+            "required": true,
+            "secret": false,
+            "env": "AWS_ACCESS_KEY_ID"
+          },
+          {
+            "key": "secret_access_key",
+            "label": "Secret access key",
+            "placeholder": "Paste the secret",
+            "required": true,
+            "secret": true,
+            "env": "AWS_SECRET_ACCESS_KEY"
+          },
+          {
+            "key": "session_token",
+            "label": "Session token",
+            "placeholder": "Only for temporary credentials",
+            "required": false,
+            "secret": true,
+            "env": "AWS_SESSION_TOKEN"
+          },
+          {
+            "key": "region",
+            "label": "Region",
+            "placeholder": "",
+            "required": false,
+            "secret": false,
+            "env": "AWS_REGION"
+          },
+          {
+            "key": "account_id",
+            "label": "Account ID",
+            "placeholder": "",
+            "required": false,
+            "secret": false,
+            "env": ""
+          }
+        ],
+        "token_page": "https://console.aws.amazon.com/iam/home#/security_credentials",
+        "account_credentials": false
       },
       "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "169186853335f66c6b52ae3034da64b4440d2b1d49ababd4fa23860b72f7f407"
+      "sha256": "e25dfbebc5f7b3b7708c72af26f0e513161a9c790d5351d0cb1beb421938d941"
     },
     {
       "manifest": {
@@ -87,7 +141,6 @@
         "operations": [
           "identity",
           "list_resources",
-          "list_credentials",
           "validate_credential",
           "write_secret",
           "guide"
@@ -98,12 +151,26 @@
             "key": "token",
             "label": "Personal access token",
             "placeholder": "github_pat_…",
-            "required": true
+            "required": true,
+            "secret": true,
+            "env": "GITHUB_TOKEN"
           }
-        ]
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Token",
+            "placeholder": "ghp_…",
+            "required": true,
+            "secret": true,
+            "env": "GITHUB_TOKEN"
+          }
+        ],
+        "token_page": "https://github.com/settings/tokens/new?description=GetKeys&scopes=repo,read:user",
+        "account_credentials": false
       },
       "wasm": "official.github-0.1.0.wasm",
-      "sha256": "c845072804f0405a6697b7c874c34db4e45d167d2e8ff4e6fc68ec17ecf13746"
+      "sha256": "e6ec6947f3cccbfad402eadfd3ab85a95b8d5bdfa6a22c4fe12a55371a02137a"
     },
     {
       "manifest": {
@@ -135,14 +202,36 @@
         "credential_fields": [
           {
             "key": "token",
-            "label": "Project API key",
+            "label": "API key",
             "placeholder": "sb_secret_…",
-            "required": true
+            "required": true,
+            "secret": true,
+            "env": "SUPABASE_KEY"
+          },
+          {
+            "key": "url",
+            "label": "Project URL",
+            "placeholder": "",
+            "required": false,
+            "secret": false,
+            "env": "SUPABASE_URL"
           }
-        ]
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Access token",
+            "placeholder": "sbp_…",
+            "required": true,
+            "secret": true,
+            "env": "SUPABASE_ACCESS_TOKEN"
+          }
+        ],
+        "token_page": "https://supabase.com/dashboard/account/tokens",
+        "account_credentials": false
       },
       "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "f58381e94c9f2320080688c7696a134b91bdb78c3cfb09a04d5f350bf0b4c559"
+      "sha256": "122d51348f5f9f45b885c83a57aca7fbc3188993462847e885efe6083e216b6f"
     },
     {
       "manifest": {
@@ -151,7 +240,7 @@
         "publisher": "getkeys",
         "version": "0.1.0",
         "api_version": 1,
-        "description": "Keep project tokens and deliver secrets to your deployments.",
+        "description": "Keep account tokens and deliver secrets to your deployments.",
         "homepage": "https://vercel.com",
         "hosts": [
           "api.vercel.com",
@@ -165,7 +254,9 @@
           "identity",
           "list_resources",
           "list_credentials",
+          "create_credential",
           "validate_credential",
+          "revoke_credential",
           "write_secret",
           "guide"
         ],
@@ -175,12 +266,26 @@
             "key": "token",
             "label": "Access token",
             "placeholder": "Paste the token value",
-            "required": true
+            "required": true,
+            "secret": true,
+            "env": "VERCEL_TOKEN"
           }
-        ]
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Access token",
+            "placeholder": "Paste the token",
+            "required": true,
+            "secret": true,
+            "env": "VERCEL_TOKEN"
+          }
+        ],
+        "token_page": "https://vercel.com/account/settings/tokens",
+        "account_credentials": true
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "8b5e709cf20c6cda69a39e85aee9490aa93f9244afa8b08fd9e48efbec1e60be"
+      "sha256": "d08c3cb49b287edbcb74bb80c4972d2c9b9c0d1d042cfcca33d42fb0abd3a527"
     }
   ]
 }

@@ -35,8 +35,8 @@ Cleanup runs after failed assertions where the provider returned the created IDs
 
 With [provider setup](setup.md) complete, check these behaviors with real accounts:
 
-1. Add each plugin and authorize in the system browser. For AWS, choose an assigned account/role. Test denial and expiration too.
-2. Reconnect the same account from Settings. Existing credentials and bindings must remain attached. A different identity or Vercel team must be rejected.
+1. Add each provider and authorize in the system browser. For AWS, choose an assigned account/role. Test denial and expiration too.
+2. Reconnect the same account from its provider in **Providers**. Existing credentials and bindings must remain attached. A different identity or Vercel team must be rejected.
 3. Restart the app and confirm the connection persists without requesting authorization again. Test Supabase refresh after access-token expiry.
 4. Rotate a disposable AWS or Supabase key used by a disposable application. Redeploy/restart the consumer, make an authenticated request, then click Verify. Confirm the old key remains usable until retirement.
 5. For GitHub/Vercel personal tokens, create a new token in the provider, import it as a new key, and choose it under **Replace in provider**. Distribute it, verify consumers, revoke the old token in the provider, then confirm manual retirement in GetKeys. Integration consent is not permission to create arbitrary personal tokens.

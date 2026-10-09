@@ -4,5 +4,10 @@
   "hosts": ["api.supabase.com", "*.supabase.co"],
   "auth": { "kind": "broker", "registration": "supabase" },
   "operations": ["identity", "list_resources", "list_credentials", "read_credential", "create_credential", "validate_credential", "revoke_credential"], "fields": [],
-  "credential_fields": [{"key":"token","label":"Project API key","placeholder":"sb_secret_…","required":true}]
+  "credential_fields": [
+    {"key":"token","label":"API key","placeholder":"sb_secret_…","required":true,"env":"SUPABASE_KEY"},
+    {"key":"url","label":"Project URL","secret":false,"env":"SUPABASE_URL"}
+  ],
+  "account_fields": [{"key":"token","label":"Access token","placeholder":"sbp_…","required":true,"env":"SUPABASE_ACCESS_TOKEN"}],
+  "token_page": "https://supabase.com/dashboard/account/tokens"
 }

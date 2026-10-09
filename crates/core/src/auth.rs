@@ -93,6 +93,20 @@ pub fn broker_url() -> Result<String> {
     );
     Ok(value.trim_end_matches('/').into())
 }
+/// Whether this app build can run the provider's browser sign-in.
+pub fn browser_ready(method: &AuthMethod) -> bool {
+    match method {
+        AuthMethod::Device { client_id_env, .. } => std::env::var(client_id_env)
+            .ok()
+            .is_some_and(|v| !v.trim().is_empty()),
+        AuthMethod::Broker { .. } => broker_url().is_ok(),
+        AuthMethod::AwsSso => true,
+    }
+}
+pub fn expiring(auth: &AuthMaterial) -> bool {
+    let (AuthMaterial::Bearer { expires_at, .. } | AuthMaterial::Aws { expires_at, .. }) = auth;
+    expires_at.is_some_and(|e| e <= now() + 60)
+}
 fn aws_region(value: &str) -> Result<()> {
     let parts: Vec<_> = value.split('-').collect();
     ensure!(
@@ -479,12 +493,7 @@ pub fn choose_role(vault: &Vault, id: &str, account: &str, role: &str) -> Result
 }
 
 pub fn refresh(connection: &mut Connection, manifest: &Manifest) -> Result<()> {
-    let expires = match &connection.auth {
-        AuthMaterial::Bearer { expires_at, .. } | AuthMaterial::Aws { expires_at, .. } => {
-            *expires_at
-        }
-    };
-    if expires.is_none_or(|e| e > now() + 60) {
+    if !expiring(&connection.auth) {
         return Ok(());
     }
     match &connection.auth {
@@ -581,12 +590,15 @@ mod tests {
     fn expiry_returns_reauthentication_instead_of_reusing_a_token() {
         let mut c = Connection {
             identity_id: "test".into(),
+            linked: Vec::new(),
+            dedicated: None,
             view: ConnectionView {
                 id: "c".into(),
                 plugin_id: "p".into(),
                 name: "test".into(),
                 state: ConnectionState::Connected,
                 config: BTreeMap::new(),
+                source: None,
             },
             auth: AuthMaterial::Bearer {
                 token: "secret".into(),

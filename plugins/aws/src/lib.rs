@@ -48,6 +48,7 @@ struct Keys {
 struct Key {
     access_key_id: String,
     create_date: Option<String>,
+    status: Option<String>,
     secret_access_key: Option<String>,
 }
 #[derive(Deserialize)]
@@ -105,6 +106,10 @@ fn credential(key: Key, resource: &str) -> RemoteCredential {
             ("secret_access_key".into(), s),
         ]),
     });
+    let mut details = BTreeMap::from([("access_key_id".into(), key.access_key_id.clone())]);
+    if let Some(status) = key.status {
+        details.insert("status".into(), status);
+    }
     RemoteCredential {
         id: key.access_key_id.clone(),
         name: key.access_key_id,
@@ -114,6 +119,7 @@ fn credential(key: Key, resource: &str) -> RemoteCredential {
         expires_at: None,
         value,
         can_rotate: true,
+        details,
     }
 }
 pub fn handle(call: Call) -> Step {

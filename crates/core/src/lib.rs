@@ -1,6 +1,7 @@
 pub mod app;
 pub mod auth;
 pub mod commands;
+pub mod discover;
 pub mod http;
 pub mod model;
 pub mod plugins;

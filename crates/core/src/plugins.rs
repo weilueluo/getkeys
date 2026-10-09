@@ -25,6 +25,7 @@ pub struct Catalog {
     pub packages: Vec<Package>,
 }
 
+#[derive(Clone)]
 pub struct Registry {
     pub catalog: Catalog,
     pub source: PathBuf,
@@ -45,10 +46,13 @@ pub fn verify_catalog(bytes: &[u8], signature: &str, key: &str) -> Result<Catalo
     let mut ids = std::collections::HashSet::new();
     for p in &catalog.packages {
         validate_manifest(&p.manifest)?;
-        ensure!(ids.insert(&p.manifest.id), "Duplicate marketplace plugin");
+        ensure!(
+            ids.insert(&p.manifest.id),
+            "Duplicate provider in the catalog"
+        );
         ensure!(
             safe_name(&p.wasm) && p.wasm.ends_with(".wasm"),
-            "Invalid plugin artifact path"
+            "Invalid provider package path"
         );
         ensure!(
             p.sha256.len() == 64 && p.sha256.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -67,16 +71,13 @@ fn safe_name(s: &str) -> bool {
 pub fn validate_manifest(m: &Manifest) -> Result<()> {
     ensure!(
         m.api_version == API_VERSION,
-        "Plugin requires a different host API version"
+        "This provider needs a different GetKeys version"
     );
     ensure!(
         safe_name(&m.id) && safe_name(&m.version),
-        "Invalid plugin identity or version"
+        "Invalid provider identity or version"
     );
-    ensure!(
-        !m.hosts.is_empty(),
-        "Plugin must declare its provider hosts"
-    );
+    ensure!(!m.hosts.is_empty(), "Provider must declare its hosts");
     for host in &m.hosts {
         let name = host.strip_prefix("*.").unwrap_or(host);
         ensure!(
@@ -85,7 +86,7 @@ pub fn validate_manifest(m: &Manifest) -> Result<()> {
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".-".contains(&b))
                 && !name.contains(".."),
-            "Invalid plugin host declaration"
+            "Invalid provider host declaration"
         );
     }
     Ok(())
@@ -116,10 +117,10 @@ impl Registry {
             .packages
             .iter()
             .find(|p| p.manifest.id == id)
-            .context("Plugin was not found in the verified marketplace")
+            .context("Provider was not found in the verified catalog")
     }
     pub fn installed_package(&self, id: &str) -> Result<Option<Package>> {
-        ensure!(safe_name(id), "Invalid plugin ID");
+        ensure!(safe_name(id), "Invalid provider ID");
         let pointer = self.installed.join(format!("{id}.json"));
         if !pointer.exists() {
             return Ok(None);
@@ -131,7 +132,7 @@ impl Registry {
             .packages
             .into_iter()
             .find(|p| p.manifest.id == id)
-            .context("Installed plugin is absent from its signed catalog")?;
+            .context("Installed provider is absent from its signed catalog")?;
         Ok(Some(package))
     }
     pub fn install(&self, id: &str, accept_permissions: bool) -> Result<()> {
@@ -150,7 +151,7 @@ impl Registry {
                 || old.manifest.auth != package.manifest.auth;
             ensure!(
                 !broadened || accept_permissions,
-                "This update requests additional permissions. Review and approve the plugin update."
+                "This update requests additional permissions. Review and approve the provider update."
             );
         }
         let bytes = std::fs::read(self.source.join(&package.wasm))?;
@@ -160,7 +161,7 @@ impl Registry {
             serde_json::from_str(runtime.plugin.call::<_, String>("describe", "")?.as_str())?;
         ensure!(
             actual == package.manifest,
-            "Plugin code and marketplace manifest disagree"
+            "Provider code and catalog manifest disagree"
         );
         let artifact = self.installed.join(format!("{}.wasm", package.sha256));
         if !artifact.exists() {
@@ -183,13 +184,13 @@ impl Registry {
     pub fn load(&self, id: &str) -> Result<Runtime> {
         let p = self
             .installed_package(id)?
-            .context("Install this plugin first")?;
+            .context("Add this provider first")?;
         let bytes = std::fs::read(self.installed.join(format!("{}.wasm", p.sha256)))?;
         verify_artifact(&p, &bytes)?;
         Runtime::new(p, &bytes)
     }
     pub fn uninstall(&self, id: &str) -> Result<()> {
-        ensure!(safe_name(id), "Invalid plugin ID");
+        ensure!(safe_name(id), "Invalid provider ID");
         std::fs::remove_file(self.installed.join(format!("{id}.json")))?;
         Ok(())
     }
@@ -236,7 +237,7 @@ struct Installed {
 pub fn verify_artifact(p: &Package, bytes: &[u8]) -> Result<()> {
     ensure!(
         hex::encode(Sha256::digest(bytes)) == p.sha256,
-        "Plugin artifact failed integrity verification"
+        "Provider package failed integrity verification"
     );
     Ok(())
 }
@@ -257,7 +258,7 @@ impl Runtime {
             .with_memory_max(1024)
             .with_timeout(Duration::from_secs(5))
             .with_allowed_hosts(std::iter::empty());
-        let plugin = extism::Plugin::new(manifest, [], false).context("Unable to load plugin")?;
+        let plugin = extism::Plugin::new(manifest, [], false).context("Unable to load provider")?;
         Ok(Self { package, plugin })
     }
     pub fn execute(
@@ -289,7 +290,7 @@ impl Runtime {
     ) -> Result<Outcome> {
         ensure!(
             self.package.manifest.operations.contains(&operation.kind()),
-            "This plugin does not support the requested operation"
+            "This provider does not support the requested operation"
         );
         let mut call = Call {
             operation,
@@ -302,10 +303,10 @@ impl Runtime {
                 .plugin
                 .call::<_, String>("run", serde_json::to_string(&call)?)
                 .map_err(|_| {
-                    anyhow::anyhow!("Plugin execution failed or exceeded its resource limit")
+                    anyhow::anyhow!("Provider code failed or exceeded its resource limit")
                 })?;
             let step: Step =
-                serde_json::from_str(&output).context("Plugin returned an invalid response")?;
+                serde_json::from_str(&output).context("Provider returned an invalid response")?;
             match step {
                 Step::Request { request, cursor } => {
                     crate::http::validate_url(&request.url, &self.package.manifest.hosts)?;
@@ -327,7 +328,7 @@ impl Runtime {
                 Step::Error { code, message } => bail!("{code}: {message}"),
             }
         }
-        bail!("Plugin exceeded the request limit; no further requests were issued")
+        bail!("Provider exceeded the request limit; no further requests were issued")
     }
 }
 

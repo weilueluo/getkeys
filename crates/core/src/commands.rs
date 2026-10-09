@@ -1,5 +1,5 @@
 use crate::{App, model::*};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_value};
 use std::{collections::BTreeMap, path::Path};
@@ -9,6 +9,19 @@ use ts_rs::TS;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
     Snapshot,
+    Discover,
+    ConnectLocal {
+        source_id: String,
+        connection_id: Option<String>,
+    },
+    OpenTokenPage {
+        plugin_id: String,
+    },
+    ConnectToken {
+        plugin_id: String,
+        fields: BTreeMap<String, String>,
+        connection_id: Option<String>,
+    },
     Reconnect {
         connection_id: String,
     },
@@ -40,6 +53,18 @@ pub enum Command {
     Sync {
         connection_id: String,
         resource: String,
+    },
+    ScanSources {
+        plugin_id: Option<String>,
+    },
+    Dedicate {
+        connection_id: String,
+    },
+    Delete {
+        credential_id: String,
+    },
+    ConfirmDeleted {
+        credential_id: String,
     },
     Import {
         input: ImportInput,
@@ -97,6 +122,19 @@ pub enum Command {
         path: String,
         passphrase: String,
     },
+    Check {
+        credential_id: String,
+    },
+    SetGroups {
+        credential_id: String,
+        groups: Vec<String>,
+    },
+    SaveCustom {
+        credential_id: Option<String>,
+        name: String,
+        fields: Vec<CustomField>,
+    },
+    OpenVaultFolder,
     Restore {
         path: String,
         passphrase: String,
@@ -106,6 +144,25 @@ impl App {
     pub fn dispatch(&self, command: Command) -> Result<Value> {
         Ok(match command {
             Command::Snapshot => to_value(self.snapshot()?)?,
+            Command::Discover => to_value(self.discover()?)?,
+            Command::ConnectLocal {
+                source_id,
+                connection_id,
+            } => to_value(self.connect_local(&source_id, connection_id.as_deref())?)?,
+            Command::OpenTokenPage { plugin_id } => {
+                let url = self.manifest(&plugin_id)?.token_page;
+                ensure!(
+                    url.starts_with("https://"),
+                    "This provider has no token page"
+                );
+                open::that_detached(url)?;
+                Value::Null
+            }
+            Command::ConnectToken {
+                plugin_id,
+                fields,
+                connection_id,
+            } => to_value(self.connect_token(&plugin_id, fields, connection_id.as_deref())?)?,
             Command::PlanReplacement {
                 credential_id,
                 replacement_id,
@@ -143,6 +200,15 @@ impl App {
                 connection_id,
                 resource,
             } => to_value(self.sync(&connection_id, &resource)?)?,
+            Command::ScanSources { plugin_id } => {
+                to_value(self.scan_sources(plugin_id.as_deref())?)?
+            }
+            Command::Dedicate { connection_id } => to_value(self.dedicate(&connection_id)?)?,
+            Command::Delete { credential_id } => to_value(self.delete(&credential_id)?)?,
+            Command::ConfirmDeleted { credential_id } => {
+                self.confirm_deleted(&credential_id)?;
+                Value::Null
+            }
             Command::Import { input } => to_value(self.import(input)?)?,
             Command::Create {
                 connection_id,
@@ -191,6 +257,25 @@ impl App {
             }
             Command::Disconnect { connection_id } => {
                 self.disconnect(&connection_id)?;
+                Value::Null
+            }
+            Command::Check { credential_id } => to_value(self.check(&credential_id)?)?,
+            Command::SetGroups {
+                credential_id,
+                groups,
+            } => to_value(self.set_groups(&credential_id, groups)?)?,
+            Command::SaveCustom {
+                credential_id,
+                name,
+                fields,
+            } => to_value(self.save_custom(credential_id.as_deref(), &name, fields)?)?,
+            Command::OpenVaultFolder => {
+                let folder = self
+                    .vault
+                    .path()
+                    .parent()
+                    .context("The vault folder is unavailable")?;
+                open::that_detached(folder)?;
                 Value::Null
             }
             Command::Export { path, passphrase } => {

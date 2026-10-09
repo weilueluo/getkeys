@@ -1,23 +1,53 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { emptySnapshot, connectedSnapshot } from './fixtures';
+import { emptySnapshot, connectedSnapshot, withVercel } from './fixtures';
+import type { Snapshot } from '../apps/desktop/src/types';
 
-async function mockHost(page: Page, connected = false) {
+async function mockHost(page: Page, connected: boolean | Snapshot = false) {
   await page.addInitScript(
     ({ data }) => {
       const host = window as typeof window & {
         __TAURI_INTERNALS__: { invoke: (name: string, args: any) => Promise<unknown> };
         isTauri: boolean;
         testCommands: any[];
+        release: () => void;
       };
+      const gate = new Promise<void>((r) => (host.release = r));
+      const found = [
+        {
+          id: 'gh:octocat',
+          plugin_id: 'official.github',
+          source: 'GitHub CLI',
+          account: 'octocat',
+          connected: false,
+        },
+        {
+          id: 'vercel',
+          plugin_id: 'official.vercel',
+          source: 'Vercel CLI',
+          account: '',
+          connected: false,
+        },
+      ];
       host.testCommands = [];
       host.isTauri = true;
       host.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           if (name === 'copy_credential') return;
+          if (name === 'export_env') return true;
           const c = args.command;
           host.testCommands.push(c);
           if (c.kind === 'snapshot') return structuredClone(data);
+          if (c.kind === 'discover') return found;
+          if (c.kind === 'scan_sources') {
+            const plugin = data.plugins.find((p) => p.manifest.id === c.plugin_id);
+            if (plugin) plugin.installed = true;
+            return found.filter((d) => !c.plugin_id || d.plugin_id === c.plugin_id);
+          }
+          if (c.kind === 'connect_local') {
+            await gate;
+            throw new Error('Bad credentials');
+          }
           if (c.kind === 'install') {
             data.plugins.find((p) => p.manifest.id === c.plugin_id)!.installed = true;
             return null;
@@ -34,7 +64,7 @@ async function mockHost(page: Page, connected = false) {
           if (c.kind === 'cancel_auth') return null;
           if (c.kind === 'resources')
             return [{ id: 'abcdefghijklmnopqrst', name: 'GetKeys', kind: 'project' }];
-          if (c.kind === 'sync') return data.credentials;
+          if (c.kind === 'sync') return [];
           if (c.kind === 'reveal') return { fields: { token: 'only-revealed-on-request' } };
           if (c.kind === 'plan_rotation') {
             const r = {
@@ -58,49 +88,192 @@ async function mockHost(page: Page, connected = false) {
         },
       };
     },
-    { data: connected ? connectedSnapshot() : emptySnapshot() },
+    {
+      data:
+        typeof connected === 'object'
+          ? connected
+          : connected
+            ? withVercel(connectedSnapshot())
+            : emptySnapshot(),
+    },
   );
 }
-test('marketplace, browser authorization, and keyboard navigation', async ({ page }) => {
+const noOverflow = (page: Page) =>
+  page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+
+test('adding a provider shows progress, then asks for a token when local sign-ins fail', async ({
+  page,
+}) => {
   await mockHost(page);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'One place for every key.' })).toBeVisible();
-  await expect(page.locator('.plugin-card')).toHaveCount(4);
+  await expect(page.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
+  await expect(page.locator('.provider-card')).toHaveCount(4);
+  await expect(page.locator('.provider-card').first()).toContainText(
+    'Signed in on this device via GitHub CLI',
+  );
   await page.screenshot({ path: 'artifacts/marketplace.png', fullPage: true });
-  const results = await new AxeBuilder({ page }).analyze();
-  expect(results.violations).toEqual([]);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.keyboard.press('Control+k');
-  await expect(page.getByRole('textbox', { name: 'Search', exact: true })).toBeFocused();
-  await page.getByRole('textbox', { name: 'Search', exact: true }).fill('github');
-  await expect(page.locator('.plugin-card')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Add plugin' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByText('ABCD-1234')).toBeVisible();
+  const search = page.getByRole('textbox', { name: 'Search', exact: true });
+  await expect(search).toBeFocused();
+  await search.fill('github');
+  await expect(page.locator('.provider-card')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  const job = page.getByRole('dialog', { name: 'Adding GitHub' });
+  await expect(job.getByText('Connecting octocat')).toBeVisible();
+  await expect(job.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/progress.png' });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.evaluate(() => (window as unknown as { release: () => void }).release());
+  const dialog = page.getByRole('dialog', { name: 'Connect GitHub' });
+  await expect(dialog.getByRole('alert')).toContainText('didn’t work');
+  await expect(dialog.getByLabel('Token', { exact: true })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/connect.png' });
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
-test('secrets stay masked and rotation requires an explicit plan', async ({ page }) => {
+test('keys stay masked, have firm actions, and rotate from the row', async ({ page }) => {
   await mockHost(page, true);
   await page.goto('/');
-  await page.getByRole('button', { name: /Production API/ }).click();
+  const keys = page.getByRole('list', { name: 'Keys' });
+  // Keys found on this device (here, the CLI sign-ins) are listed with the rest.
+  await expect(keys.getByRole('listitem')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: /Import/ })).toHaveCount(0);
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Vercel CLI' })).toBeVisible();
+  for (const action of ['Reveal', 'Copy', 'Rotate', 'Delete'])
+    await expect(page.getByRole('button', { name: `${action} Production API` })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/keys.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await expect(page.getByText('only-revealed-on-request')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Reveal for 30 seconds' }).click();
+  await page.getByRole('button', { name: 'Reveal Production API' }).click();
   await expect(page.getByText('only-revealed-on-request')).toBeVisible();
-  await page.getByRole('button', { name: 'Hide values' }).click();
-  await page.getByRole('button', { name: 'Rotate this key', exact: true }).click();
-  await expect(page.getByText('No consumers are registered.', { exact: false })).toBeVisible();
-  await page.getByRole('button', { name: 'Review rotation plan' }).click();
-  await expect(page.getByRole('button', { name: 'Create replacement' })).toBeVisible();
+  await page.getByRole('button', { name: 'Hide Production API' }).click();
+  await expect(page.getByText('only-revealed-on-request')).toHaveCount(0);
+  await page.getByRole('tab', { name: /Empty profiles/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Fill in deploy-bot' })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/keys-secretless.png', fullPage: true });
+  await page.getByRole('tab', { name: /Ready to use/ }).click();
+  await page.getByRole('button', { name: 'Details for Production API' }).click();
+  const details = page.getByRole('region', { name: 'Production API details' });
+  await expect(details).toContainText('SUPABASE_URL');
+  await page.screenshot({ path: 'artifacts/key-details.png', fullPage: true });
+  await page.getByRole('button', { name: 'Rotate Production API' }).click();
+  const rotate = page.getByRole('dialog', { name: 'Rotate Production API' });
+  await expect(rotate).toContainText('No apps are registered');
+  await page.screenshot({ path: 'artifacts/rotate.png' });
+  await rotate.getByRole('button', { name: 'Review rotation plan' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(details.getByRole('list', { name: 'Rotation progress' })).toBeVisible();
+  await expect(details.getByRole('button', { name: 'Create replacement' })).toBeVisible();
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Production API' })).toContainText(
+    'Rotating',
+  );
   await expect(page.getByRole('button', { name: 'Retire old key' })).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/rotation.png', fullPage: true });
 });
+test('management keys live with their accounts under Providers', async ({ page }) => {
+  await mockHost(page, true);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Providers', exact: true }).click();
+  await page.getByRole('button', { name: 'Vercel accounts' }).click();
+  const panel = page.getByRole('region', { name: 'Vercel accounts' });
+  await expect(panel).toContainText('Vercel CLI');
+  await expect(panel.getByRole('button', { name: /Create dedicated key/ })).toBeVisible();
+  await expect(panel.getByRole('button', { name: 'Add account' })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/accounts.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.screenshot({ path: 'artifacts/accounts-dark.png', fullPage: true });
+});
 test('compact layout has no horizontal overflow', async ({ page }) => {
-  await mockHost(page);
+  await mockHost(page, true);
   await page.setViewportSize({ width: 640, height: 850 });
   await page.goto('/');
-  await expect(page.locator('.plugin-card')).toHaveCount(4);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await page.getByRole('button', { name: 'Details for Production API' }).click();
+  await expect(page.getByRole('region', { name: 'Production API details' })).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
+  await page.screenshot({ path: 'artifacts/compact-keys.png', fullPage: true });
+  await page.getByRole('button', { name: 'Providers', exact: true }).click();
+  await page.getByRole('button', { name: 'Supabase accounts' }).click();
+  await expect(page.getByRole('region', { name: 'Supabase accounts' })).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
   await page.screenshot({ path: 'artifacts/compact.png', fullPage: true });
+});
+test('groups, rejected keys, keys without a provider, and export', async ({ page }) => {
+  const data = withVercel(connectedSnapshot());
+  const [api, cli] = data.credentials;
+  api.groups = ['backend'];
+  cli.problem = 'Rejected by the provider. It was revoked or is wrong.';
+  cli.groups = ['Failed'];
+  data.credentials.push({
+    ...api,
+    id: 'custom',
+    connection_id: '',
+    provider_id: 'custom',
+    credential_type: 'custom',
+    name: 'OpenAI',
+    resource: '',
+    resource_name: '',
+    can_rotate: false,
+    groups: ['backend'],
+    problem: null,
+    fields: [
+      {
+        key: 'OPENAI_API_KEY',
+        label: 'OPENAI_API_KEY',
+        env: 'OPENAI_API_KEY',
+        secret: true,
+        value: null,
+        available: true,
+      },
+    ],
+  });
+  await mockHost(page, data);
+  await page.goto('/');
+  const keys = page.getByRole('list', { name: 'Keys' });
+  await expect(keys.getByRole('listitem')).toHaveCount(4);
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Supabase CLI' })).toContainText(
+    'Invalid',
+  );
+  await expect(keys.getByRole('listitem').filter({ hasText: 'OpenAI' })).toContainText('Custom');
+  await page.screenshot({ path: 'artifacts/keys-groups.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole('tab', { name: /^backend/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(2);
+  await page.getByRole('tab', { name: /^Failed/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(1);
+  await page.screenshot({ path: 'artifacts/keys-failed.png', fullPage: true });
+  await page.getByRole('button', { name: 'New group' }).click();
+  await page.getByLabel('New group name').fill('staging');
+  await page.keyboard.press('Enter');
+  const picking = page.getByRole('dialog', { name: 'staging' });
+  await expect(picking.getByRole('checkbox')).toHaveCount(5);
+  await page.screenshot({ path: 'artifacts/group-new.png' });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: /^backend/ }).click();
+  await page.getByRole('button', { name: 'Export keys' }).click();
+  const exporting = page.getByRole('dialog', { name: 'Export backend' });
+  await expect(exporting.getByRole('checkbox')).toHaveCount(3);
+  await expect(exporting).toContainText('OPENAI_API_KEY');
+  await page.screenshot({ path: 'artifacts/export.png' });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await exporting.getByRole('button', { name: /Save \.env/ }).click();
+  await expect(page.getByText('Saved 3 variables')).toBeVisible();
+  await page.getByRole('button', { name: 'New key' }).click();
+  const form = page.getByRole('dialog', { name: 'New key' });
+  await form.getByLabel('Provider').selectOption('custom');
+  await form.getByRole('button', { name: 'Add value' }).click();
+  await expect(form.getByLabel('Variable 2', { exact: true })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/custom-key.png' });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText('Vault location')).toBeVisible();
+  await page.screenshot({ path: 'artifacts/settings.png', fullPage: true });
+  await page.getByRole('button', { name: /^Keys/ }).click();
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.getByRole('button', { name: 'Details for OpenAI' }).click();
+  await page.screenshot({ path: 'artifacts/keys-dark.png', fullPage: true });
 });

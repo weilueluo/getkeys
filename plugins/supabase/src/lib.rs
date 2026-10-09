@@ -23,14 +23,34 @@ fn credential(v: &Value, resource: &str) -> Result<RemoteCredential, &'static st
         });
     Ok(RemoteCredential {
         id: v["id"].as_str().ok_or("missing key id")?.into(),
-        name: v["name"].as_str().unwrap_or(kind).into(),
+        name: key_name(kind, v["name"].as_str().unwrap_or_default()),
         credential_type: kind.into(),
         resource: resource.into(),
         created_at: v["inserted_at"].as_str().map(str::to_owned),
         expires_at: None,
         value,
         can_rotate: kind == "secret",
+        details: BTreeMap::from([("url".into(), format!("https://{resource}.supabase.co"))]),
     })
+}
+
+/// Every project has a publishable and a secret key both named "default", so the name says
+/// which one it is.
+fn key_name(kind: &str, name: &str) -> String {
+    let kind_label = match kind {
+        "publishable" => "Publishable key",
+        "secret" => "Secret key",
+        _ => "",
+    };
+    match (kind, name) {
+        ("legacy", "anon") => "Legacy anon key".into(),
+        ("legacy", "service_role") => "Legacy service_role key".into(),
+        ("legacy", name) => format!("Legacy {name} key"),
+        (_, "" | "default") if !kind_label.is_empty() => kind_label.into(),
+        (_, name) if !kind_label.is_empty() => format!("{name} · {}", kind_label.to_lowercase()),
+        (kind, "") => kind.into(),
+        (_, name) => name.into(),
+    }
 }
 
 fn execute(call: Call) -> Result<Step, &'static str> {
@@ -78,11 +98,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                     .as_array()
                     .ok_or("keys")?
                     .iter()
-                    .map(|k| {
-                        let mut c = credential(k, &resource)?;
-                        c.value = None;
-                        Ok(c)
-                    })
+                    .map(|k| credential(k, &resource))
                     .collect::<Result<_, &'static str>>()?;
                 done(Outcome::Credentials(keys))
             }
@@ -156,8 +172,9 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         }
     };
     match call.operation {
-        Operation::ReadCredential { .. } => req.url.push_str("?reveal=true"),
-        Operation::ListCredentials { .. } => req.url.push_str("?reveal=false"),
+        Operation::ReadCredential { .. } | Operation::ListCredentials { .. } => {
+            req.url.push_str("?reveal=true")
+        }
         Operation::CreateCredential { name, .. } => {
             req.method = "POST".into();
             req.url.push_str("?reveal=true");
@@ -196,7 +213,7 @@ mod tests {
         }
     }
     #[test]
-    fn inventory_never_returns_values() {
+    fn listing_keeps_each_key_value() {
         let Step::Complete {
             result: Outcome::Credentials(keys),
         } = handle(call(
@@ -208,8 +225,15 @@ mod tests {
         else {
             panic!()
         };
-        assert!(keys[0].value.is_none());
+        assert!(keys[0].value.is_some());
         assert!(keys[0].can_rotate);
+    }
+    #[test]
+    fn default_keys_are_named_by_type() {
+        assert_eq!(key_name("publishable", "default"), "Publishable key");
+        assert_eq!(key_name("secret", "default"), "Secret key");
+        assert_eq!(key_name("secret", "backend"), "backend · secret key");
+        assert_eq!(key_name("legacy", "anon"), "Legacy anon key");
     }
     #[test]
     fn legacy_keys_cannot_use_modern_rotation() {

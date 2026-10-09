@@ -1,119 +1,67 @@
 import { useState } from 'react';
-import { Download, ShieldCheck, Upload } from 'lucide-react';
+import { Copy, Download, FolderOpen, Upload } from 'lucide-react';
 import type { Controller } from './controller';
 import { request } from './bridge';
-import { Field, Modal, ProviderMark } from './ui';
-export function SettingsPanel({
-  snapshot,
-  busy,
-  perform,
-  reconnect,
-}: Controller & { reconnect: (id: string) => void }) {
+import { Field, Modal, PageHeader } from './ui';
+export function SettingsPanel({ snapshot, busy, perform }: Controller) {
   const [backup, setBackup] = useState<'export' | 'restore'>();
-  const [disconnect, setDisconnect] = useState<string>();
   return (
     <>
-      <div className="page-heading">
-        <div className="eyebrow">ON YOUR TERMS</div>
-        <h1>Settings</h1>
-        <p>Your vault, connections, and recovery options.</p>
-      </div>
+      <PageHeader title="Settings" />
       <section className="settings-section">
-        <h2>
-          <ShieldCheck size={18} /> Local vault
-        </h2>
-        <p>
-          Credentials are encrypted with SQLCipher. The vault key lives in your operating system’s
-          credential store. Connection tokens stay out of the interface.
-        </p>
-        <div className="button-row">
-          <button className="button secondary" onClick={() => setBackup('export')}>
-            <Download size={15} /> Export encrypted backup
-          </button>
-          <button className="button secondary" onClick={() => setBackup('restore')}>
-            <Upload size={15} /> Restore backup
-          </button>
-        </div>
-      </section>
-      <section className="settings-section">
-        <h2>Provider setup</h2>
-        {snapshot.setup.length ? (
-          <>
-            {snapshot.setup.map((s) => (
-              <p className="setup-note" key={s}>
-                {s}
-              </p>
-            ))}
-            <p className="quiet small-text">
-              OAuth app registrations belong to the app operator. Set the configuration before
-              launching GetKeys, then restart the app. AWS uses your IAM Identity Center start URL
-              and region.
-            </p>
-          </>
-        ) : (
+        <div className="settings-label">
+          <h2>Local vault</h2>
           <p>
-            Browser authorization is configured. Your provider still controls the permissions you
-            can grant.
+            Encrypted with SQLCipher. The vault key is held by your operating system’s credential
+            store, and connection tokens never reach this window.
           </p>
-        )}
-      </section>
-      <section className="settings-section">
-        <h2>Accounts</h2>
-        {snapshot.connections.map((c) => (
-          <div className="settings-account" key={c.id}>
-            <ProviderMark
-              small
-              name={
-                snapshot.plugins.find((p) => p.manifest.id === c.plugin_id)?.manifest.name ?? ''
-              }
-            />
-            <div>
-              <strong>{c.name}</strong>
-              <small>
-                {c.state === 'needs_reauth'
-                  ? 'Reconnect required'
-                  : c.state === 'disconnected'
-                    ? 'Disconnected · saved keys available'
-                    : 'Connected'}
-              </small>
+        </div>
+        <div className="settings-content">
+          <div className="settings-row">
+            <div className="settings-text">
+              <strong>Vault location</strong>
+              <code className="path" title={snapshot.vault_path}>
+                {snapshot.vault_path}
+              </code>
             </div>
-            <button className="text-button" disabled={busy} onClick={() => reconnect(c.id)}>
-              Reconnect
-            </button>
-            {c.state !== 'disconnected' && (
-              <button className="text-button" disabled={busy} onClick={() => setDisconnect(c.id)}>
-                Disconnect
-              </button>
-            )}
-          </div>
-        ))}
-        {snapshot.connections.length === 0 && <p className="quiet">No accounts connected.</p>}
-      </section>
-      <section className="settings-section">
-        <h2>Installed plugins</h2>
-        {snapshot.plugins
-          .filter((p) => p.installed)
-          .map((p) => (
-            <div className="settings-account" key={p.manifest.id}>
-              <ProviderMark small name={p.manifest.name} />
-              <div>
-                <strong>{p.manifest.name}</strong>
-                <small>Version {p.manifest.version}</small>
-              </div>
+            <div className="button-row">
               <button
-                className="text-button"
-                disabled={busy}
+                className="icon-button outline"
+                title="Copy path"
+                aria-label="Copy vault path"
                 onClick={() =>
                   void perform(
-                    () => request({ kind: 'uninstall', plugin_id: p.manifest.id }),
-                    'Plugin removed',
+                    () => navigator.clipboard.writeText(snapshot.vault_path),
+                    'Path copied',
                   )
                 }
               >
-                Remove
+                <Copy size={14} strokeWidth={1.75} />
+              </button>
+              <button
+                className="button outline"
+                disabled={busy}
+                onClick={() => void perform(() => request({ kind: 'open_vault_folder' }))}
+              >
+                <FolderOpen size={14} strokeWidth={1.75} /> Open folder
               </button>
             </div>
-          ))}
+          </div>
+          <div className="settings-row">
+            <div>
+              <strong>Encrypted backup</strong>
+              <small>A passphrase-protected .age file you can restore on another device.</small>
+            </div>
+            <div className="button-row">
+              <button className="button outline" onClick={() => setBackup('restore')}>
+                <Upload size={14} strokeWidth={1.75} /> Restore
+              </button>
+              <button className="button outline" onClick={() => setBackup('export')}>
+                <Download size={14} strokeWidth={1.75} /> Export
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
       {backup && (
         <Modal
@@ -158,28 +106,6 @@ export function SettingsPanel({
               {backup === 'export' ? 'Export backup' : 'Restore vault'}
             </button>
           </form>
-        </Modal>
-      )}
-      {disconnect && (
-        <Modal title="Disconnect this account?" onClose={() => setDisconnect(undefined)}>
-          <p>
-            This removes the stored connection token. Saved credential values stay in your local
-            vault. You can also revoke the app’s access in your provider settings.
-          </p>
-          <button
-            className="button full"
-            disabled={busy}
-            onClick={() =>
-              void perform(
-                () => request({ kind: 'disconnect', connection_id: disconnect }),
-                'Account disconnected',
-              ).then((result) => {
-                if (result !== undefined) setDisconnect(undefined);
-              })
-            }
-          >
-            Disconnect account
-          </button>
         </Modal>
       )}
     </>

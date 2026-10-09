@@ -1,33 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  Activity,
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  KeyRound,
-  LoaderCircle,
-  Package,
-  RotateCw,
-  Search,
-  Settings,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
-import type { AuthProgress, PluginView, Snapshot } from './types';
+import { Blocks, Check, KeyRound, Lock, Settings, TriangleAlert, X } from 'lucide-react';
+import type { AuthProgress, ConnectionView, Discovery, PluginView, Snapshot } from './types';
 import { request } from './bridge';
-import { Field, Modal, ProviderMark, humanize } from './ui';
+import { ConnectDialog } from './Connect';
+import { DialogHost, KeyGlyph, Modal, SearchField } from './ui';
 import { Marketplace } from './Marketplace';
 import { VaultPanel } from './VaultPanel';
-import { Rotations } from './Rotations';
 import { SettingsPanel } from './SettingsPanel';
+import { JobDialog, useJob, type Outcome } from './Job';
+import { listed } from './secrets';
 
-type Page = 'vault' | 'plugins' | 'rotations' | 'activity' | 'settings';
+type Page = 'vault' | 'plugins' | 'settings';
 const navigation = [
-  { id: 'vault', label: 'My keys', icon: KeyRound },
-  { id: 'plugins', label: 'Plugins', icon: Package },
-  { id: 'rotations', label: 'Rotations', icon: RotateCw },
-  { id: 'activity', label: 'Activity', icon: Activity },
+  { id: 'vault', label: 'Keys', icon: KeyRound },
+  { id: 'plugins', label: 'Providers', icon: Blocks },
 ] as const;
 
 export function App() {
@@ -38,8 +24,16 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [account, setAccount] = useState('');
-  const [configure, setConfigure] = useState<PluginView>();
+  const [dialogs, setDialogs] = useState(0);
+  const opened = useCallback((delta: number) => setDialogs((n) => n + delta), []);
+  const [connecting, setConnecting] = useState<{
+    plugin: PluginView;
+    connectionId?: string;
+    rotate?: boolean;
+    /** The sign-ins on this device were already tried and failed. */
+    tried?: boolean;
+  }>();
+  const [found, setFound] = useState<Discovery[]>([]);
   const [auth, setAuth] = useState<{
     plugin: PluginView;
     progress: AuthProgress;
@@ -50,13 +44,22 @@ export function App() {
     setSnapshot(data);
     return data;
   }, []);
+  const scan = useCallback(
+    () =>
+      request<Discovery[]>({ kind: 'discover' })
+        .then(setFound)
+        .catch(() => setFound([])),
+    [],
+  );
+  const { job, run, cancel, close } = useJob(refresh, setBusy);
   useEffect(() => {
     void refresh()
       .then((s) => {
-        if (s.credentials.length > 0) setPage('vault');
+        if (s.credentials.length > 0 || s.connections.length > 0) setPage('vault');
       })
       .catch((e) => setError(String(e)));
-  }, [refresh]);
+    void scan();
+  }, [refresh, scan]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -73,13 +76,17 @@ export function App() {
     return () => clearTimeout(timer);
   }, [notice]);
   const perform = useCallback(
-    async <T,>(task: () => Promise<T>, message?: string): Promise<T | undefined> => {
+    async <T,>(
+      task: () => Promise<T>,
+      message?: string | ((result: T) => string | undefined),
+    ): Promise<T | undefined> => {
       setBusy(true);
       setError('');
       try {
         const result = await task();
+        const text = typeof message === 'function' ? message(result) : message;
         await refresh();
-        if (message) setNotice(message);
+        if (text) setNotice(text);
         return result;
       } catch (e) {
         setError(String(e));
@@ -91,12 +98,32 @@ export function App() {
     },
     [refresh],
   );
+  const keyCount = (n: number) => `${n} ${n === 1 ? 'key' : 'keys'}`;
+  /** Lists an account's keys after it connects. */
+  const listKeys = async (connection: ConnectionView) => {
+    const outcome = await run(`Adding ${connection.name}`, { connection: connection.id });
+    if (outcome && !outcome.failed.length)
+      setNotice(`Added ${connection.name} · ${keyCount(outcome.added)}`);
+  };
+  const proceed = (plugin: PluginView, progress?: AuthProgress, rotated = false) => {
+    if (!progress) return;
+    setConnecting(undefined);
+    if (progress.kind === 'connected') {
+      setAuth(undefined);
+      void scan();
+      if (rotated) setNotice('Sign-in key replaced');
+      else {
+        changePage('vault');
+        void listKeys(progress.connection);
+      }
+    } else if (progress.kind === 'browser' || progress.kind === 'select_role')
+      setAuth({ plugin, progress, flowId: progress.flow_id });
+  };
   const startAuth = async (
     plugin: PluginView,
     config: Record<string, string>,
     connectionId?: string,
   ) => {
-    setConfigure(undefined);
     const progress = await perform(async () => {
       if (!plugin.installed)
         await request({ kind: 'install', plugin_id: plugin.manifest.id, accept_permissions: true });
@@ -106,10 +133,81 @@ export function App() {
           : { kind: 'begin_auth', plugin_id: plugin.manifest.id, config },
       );
     });
-    if (progress?.kind === 'browser') setAuth({ plugin, progress, flowId: progress.flow_id });
+    proceed(plugin, progress);
   };
-  const connect = (plugin: PluginView) =>
-    plugin.manifest.fields.length ? setConfigure(plugin) : void startAuth(plugin, {});
+  const connect = (plugin: PluginView, connectionId?: string) => {
+    setError('');
+    setConnecting({ plugin, connectionId });
+  };
+  const pluginFor = (id: string) => {
+    const c = snapshot?.connections.find((c) => c.id === id);
+    const p = snapshot?.plugins.find((p) => p.manifest.id === c?.plugin_id);
+    return c && p ? { c, p } : undefined;
+  };
+  const reconnect = (id: string) => {
+    const target = pluginFor(id);
+    if (!target) return;
+    if (target.c.source === 'token') connect(target.p, id);
+    else void startAuth(target.p, {}, id);
+  };
+  /** Opens the provider's token page and asks for the new sign-in key. */
+  const rotateSignIn = (id: string) => {
+    const target = pluginFor(id);
+    if (!target) return;
+    void request({ kind: 'open_token_page', plugin_id: target.p.manifest.id }).catch(() => {});
+    setError('');
+    setConnecting({ plugin: target.p, connectionId: id, rotate: true });
+  };
+  const failedNote = (o: Outcome) => (o.refused ? ` · ${o.refused} moved to Failed` : '');
+  const summary = (o: Outcome) =>
+    (o.added ? `Found ${keyCount(o.added)}` : o.cancelled ? 'Stopped' : 'Keys are up to date') +
+    failedNote(o);
+  /** Looks for new sign-ins on this device, then lists the keys in each account in `scope`. */
+  const refreshKeys = async (
+    scope: { connection?: string; connections?: string[]; label?: string } = {},
+  ) => {
+    const title = scope.label
+      ? `Refreshing ${scope.label}`
+      : scope.connection
+        ? 'Refreshing account'
+        : 'Refreshing keys';
+    const { label: _, ...jobScope } = scope;
+    const outcome = await run(title, jobScope);
+    if (outcome && (!outcome.failed.length || outcome.cancelled)) setNotice(summary(outcome));
+    void scan();
+  };
+  /** Adds a provider by bringing in every sign-in on this device, then the keys behind them. */
+  const add = async (plugin: PluginView) => {
+    const name = plugin.manifest.name;
+    setError('');
+    const outcome = await run(`Adding ${name}`, { plugin: plugin.manifest.id });
+    void scan();
+    if (!outcome) return;
+    const accounts = outcome.snapshot.connections.filter(
+      (c) => c.plugin_id === plugin.manifest.id && c.state !== 'disconnected',
+    );
+    if (!accounts.length) {
+      if (outcome.cancelled) return;
+      // Nothing usable on this device: ask for a token or a browser sign-in instead.
+      const failure = outcome.failed.find((s) => s.label.startsWith('Connecting'));
+      close();
+      if (failure) setError(`The ${name} sign-in on this device didn’t work (${failure.detail}).`);
+      setConnecting({ plugin, tried: true });
+      return;
+    }
+    changePage('vault');
+    if (!outcome.failed.length || outcome.cancelled)
+      setNotice(
+        outcome.cancelled
+          ? summary(outcome)
+          : `Added ${name} · ${keyCount(outcome.added)}${failedNote(outcome)}`,
+      );
+  };
+  const dedicate = (id: string, rotating: boolean) =>
+    void perform(
+      () => request<ConnectionView>({ kind: 'dedicate', connection_id: id }),
+      rotating ? 'Management key rotated' : 'Dedicated management key created',
+    );
   useEffect(() => {
     if (!auth || !['browser', 'pending'].includes(auth.progress.kind)) return;
     const interval = 'interval' in auth.progress ? auth.progress.interval : 2;
@@ -120,11 +218,8 @@ export function App() {
           .then(async (progress) => {
             if (!active) return;
             if (progress.kind === 'connected') {
-              setAuth(undefined);
-              setAccount(progress.connection.id);
-              setPage('vault');
-              setNotice(`Connected to ${auth.plugin.manifest.name}`);
               await refresh();
+              proceed(auth.plugin, progress);
             } else
               setAuth({
                 ...auth,
@@ -153,291 +248,229 @@ export function App() {
     setSearch('');
   };
   const control = snapshot && { snapshot, busy, perform };
+  const connections = snapshot?.connections ?? [];
+  const searchField = (placeholder: string) => (
+    <SearchField ref={searchRef} value={search} onChange={setSearch} placeholder={placeholder} />
+  );
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <button className="brand" onClick={() => changePage('plugins')} aria-label="GetKeys home">
-          <span className="brand-symbol">
-            <KeyRound size={19} />
-          </span>
-          getkeys<span className="brand-dot">.</span>
-        </button>
-        <div className="workspace-label">
-          <span className="workspace-avatar">P</span>
-          <div>
-            Personal workspace<small>On this device</small>
-          </div>
-        </div>
-        <nav aria-label="Main navigation">
-          {navigation.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              aria-current={page === id ? 'page' : undefined}
-              className={page === id ? 'nav-item active' : 'nav-item'}
-              onClick={() => changePage(id)}
-            >
-              <Icon size={17} strokeWidth={1.65} />
-              {label}
-              {id === 'vault' && !!snapshot?.credentials.length && (
-                <span className="nav-count">
-                  {snapshot.credentials.filter((c) => !c.retired).length}
-                </span>
-              )}
-            </button>
-          ))}
-        </nav>
-        <div className="account-heading">CONNECTED ACCOUNTS</div>
-        <div className="account-list">
-          {snapshot?.connections
-            .filter((c) => c.state !== 'disconnected')
-            .map((c) => (
+    <DialogHost.Provider value={{ error, opened }}>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <button
+            className="brand"
+            onClick={() => changePage(connections.length ? 'vault' : 'plugins')}
+            aria-label="GetKeys home"
+          >
+            <span className="brand-tile">
+              <KeyGlyph size={16} />
+            </span>
+            <span>getkeys</span>
+          </button>
+          <nav aria-label="Main navigation">
+            {navigation.map(({ id, label, icon: Icon }) => (
               <button
-                key={c.id}
-                className="account-item"
-                onClick={() => {
-                  setAccount(c.id);
-                  changePage('vault');
-                }}
+                key={id}
+                aria-current={page === id ? 'page' : undefined}
+                className={page === id ? 'nav-item active' : 'nav-item'}
+                onClick={() => changePage(id)}
+                title={label}
               >
-                <ProviderMark
-                  small
-                  name={
-                    snapshot.plugins.find((p) => p.manifest.id === c.plugin_id)?.manifest.name ??
-                    c.plugin_id
-                  }
-                />
-                <span>{c.name}</span>
-                <span className={`status-dot ${c.state}`} />
+                <Icon size={16} strokeWidth={1.6} />
+                <span className="nav-label">{label}</span>
+                {id === 'vault' && !!snapshot?.credentials.length && (
+                  <span className="nav-count">
+                    {snapshot.credentials.filter((c) => listed(c, snapshot.connections)).length}
+                  </span>
+                )}
               </button>
             ))}
-          {!snapshot?.connections.some((c) => c.state !== 'disconnected') && (
-            <p className="account-empty">Your accounts will appear here.</p>
-          )}
-        </div>
-        <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${page === 'settings' ? 'active' : ''}`}
-            onClick={() => changePage('settings')}
-          >
-            <Settings size={17} strokeWidth={1.65} />
-            Settings
-          </button>
-          <div className="vault-status">
-            <ShieldCheck size={14} />
-            <span>Local & encrypted</span>
-            <span className="status-dot connected" />
-          </div>
-        </div>
-      </aside>
-      <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumb">
-            Workspace <ChevronRight size={13} />
-            <strong>{page === 'vault' ? 'My keys' : page[0].toUpperCase() + page.slice(1)}</strong>
-          </div>
-          <div className="search">
-            <Search size={16} />
-            <input
-              ref={searchRef}
-              aria-label="Search"
-              placeholder={page === 'plugins' ? 'Find a provider…' : 'Search keys…'}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <kbd>⌘ K</kbd>
-          </div>
-        </header>
-        <main>
-          {error && (
-            <div role="alert" className="alert">
-              <CircleHelp size={18} />
-              <span>{error}</span>
-              <button
-                aria-label="Dismiss error"
-                className="icon-button"
-                onClick={() => setError('')}
-              >
-                <X size={15} />
-              </button>
+          </nav>
+          <div className="sidebar-bottom">
+            <button
+              className={`nav-item ${page === 'settings' ? 'active' : ''}`}
+              aria-current={page === 'settings' ? 'page' : undefined}
+              onClick={() => changePage('settings')}
+              title="Settings"
+            >
+              <Settings size={16} strokeWidth={1.6} />
+              <span className="nav-label">Settings</span>
+            </button>
+            <div className="vault-status">
+              <Lock size={12} strokeWidth={1.75} />
+              <span>Encrypted on this device</span>
             </div>
-          )}
-          {!control ? (
-            <div className="empty">
-              <KeyRound size={28} />
-              <h1>Welcome to GetKeys.</h1>
-              <p>
-                {error
-                  ? 'Your vault could not be opened. Resolve the message above and try again.'
-                  : 'Opening your local vault…'}
-              </p>
-              {error && (
+          </div>
+        </aside>
+        <div className="main-shell">
+          {busy && <div className="progress" aria-hidden="true" />}
+          <main>
+            {error && !dialogs && (
+              <div role="alert" className="alert">
+                <TriangleAlert size={16} strokeWidth={1.75} />
+                <span>{error}</span>
                 <button
-                  className="button secondary"
-                  onClick={() =>
-                    void refresh()
-                      .then(() => setError(''))
-                      .catch((e) => setError(String(e)))
-                  }
+                  aria-label="Dismiss error"
+                  className="icon-button"
+                  onClick={() => setError('')}
                 >
-                  Try again
+                  <X size={14} />
                 </button>
-              )}
-            </div>
-          ) : (
-            <>
-              {page === 'plugins' && <Marketplace {...control} search={search} connect={connect} />}
-              {page === 'vault' && (
-                <VaultPanel
-                  {...control}
-                  search={search}
-                  account={account}
-                  setAccount={setAccount}
-                  browse={() => changePage('plugins')}
-                  onRotation={() => changePage('rotations')}
-                />
-              )}
-              {page === 'rotations' && <Rotations {...control} />}
-              {page === 'settings' && (
-                <SettingsPanel
-                  {...control}
-                  reconnect={(id) => {
-                    const c = snapshot.connections.find((c) => c.id === id)!;
-                    const p = snapshot.plugins.find((p) => p.manifest.id === c.plugin_id)!;
-                    void startAuth(p, {}, id);
-                  }}
-                />
-              )}
-              {page === 'activity' && (
-                <>
-                  <div className="page-heading">
-                    <div className="eyebrow">LOCAL AUDIT TRAIL</div>
-                    <h1>Activity</h1>
-                    <p>A record of actions. Secret values are never included.</p>
-                  </div>
-                  <div className="activity-list">
-                    {snapshot.activity.map((a) => (
-                      <div key={a.id}>
-                        <span className="activity-icon">
-                          <Check size={14} />
-                        </span>
-                        <div>
-                          <strong>{humanize(a.action)}</strong>
-                          <small className="mono">{a.subject}</small>
-                        </div>
-                        <time>{new Date(a.timestamp * 1000).toLocaleString()}</time>
-                      </div>
-                    ))}
-                    {snapshot.activity.length === 0 && <p className="quiet">No activity yet.</p>}
-                  </div>
-                </>
-              )}
-            </>
-          )}
-        </main>
-        <footer className="app-footer">
-          <span>
-            GETKEYS <span className="quiet">/</span> YOUR KEYS, IN YOUR HANDS
-          </span>
-          <span>v0.1.0</span>
-        </footer>
-      </div>
-      {busy && (
-        <div role="status" className="busy-indicator">
-          <LoaderCircle size={15} className="spin" /> Working…
+              </div>
+            )}
+            {!control ? (
+              <div className="startup">
+                <KeyGlyph size={28} />
+                <h1>GetKeys</h1>
+                <p>
+                  {error
+                    ? 'Your vault could not be opened. Resolve the message above and try again.'
+                    : 'Opening your vault…'}
+                </p>
+                {error && (
+                  <button
+                    className="button secondary"
+                    onClick={() =>
+                      void refresh()
+                        .then(() => setError(''))
+                        .catch((e) => setError(String(e)))
+                    }
+                  >
+                    Try again
+                  </button>
+                )}
+              </div>
+            ) : (
+              <>
+                {page === 'plugins' && (
+                  <Marketplace
+                    {...control}
+                    search={search}
+                    searchField={searchField('Filter providers')}
+                    connect={connect}
+                    add={(p) => void add(p)}
+                    found={found}
+                    refreshAccount={(id) => void refreshKeys({ connection: id })}
+                    reconnect={reconnect}
+                    rotateSignIn={rotateSignIn}
+                    dedicate={dedicate}
+                  />
+                )}
+                {page === 'vault' && (
+                  <VaultPanel
+                    {...control}
+                    search={search}
+                    searchField={searchField('Filter keys')}
+                    browse={() => changePage('plugins')}
+                    refreshKeys={(scope) => void refreshKeys(scope)}
+                  />
+                )}
+                {page === 'settings' && <SettingsPanel {...control} />}
+              </>
+            )}
+          </main>
         </div>
-      )}
-      {notice && (
-        <div className="toast" role="status">
-          <Check size={16} />
-          {notice}
-        </div>
-      )}
-      {configure && (
-        <Modal title={`Connect ${configure.manifest.name}`} onClose={() => setConfigure(undefined)}>
-          <p className="quiet">
-            Enter your account details, then authorize GetKeys in your browser.
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = new FormData(e.currentTarget);
-              void startAuth(
-                configure,
-                Object.fromEntries([...form].map(([k, v]) => [k, String(v)])),
-              );
+        {busy && (
+          <div role="status" className="visually-hidden">
+            Working…
+          </div>
+        )}
+        {notice && (
+          <div className="toast" role="status">
+            <Check size={14} strokeWidth={2} />
+            {notice}
+          </div>
+        )}
+        {job && <JobDialog job={job} cancel={cancel} />}
+        {connecting && (
+          <ConnectDialog
+            plugin={connecting.plugin}
+            found={connecting.tried ? [] : found}
+            mode={connecting.rotate ? 'rotate' : connecting.connectionId ? 'reconnect' : 'connect'}
+            busy={busy}
+            onClose={() => {
+              setConnecting(undefined);
+              setError('');
+            }}
+            onLocal={(d) =>
+              void perform(() =>
+                request<AuthProgress>({
+                  kind: 'connect_local',
+                  source_id: d.id,
+                  connection_id: null,
+                }),
+              ).then((p) => proceed(connecting.plugin, p))
+            }
+            onToken={(fields) =>
+              void perform(() =>
+                request<AuthProgress>({
+                  kind: 'connect_token',
+                  plugin_id: connecting.plugin.manifest.id,
+                  fields,
+                  connection_id: connecting.connectionId ?? null,
+                }),
+              ).then((p) => proceed(connecting.plugin, p, connecting.rotate))
+            }
+            onTokenPage={() =>
+              void request({
+                kind: 'open_token_page',
+                plugin_id: connecting.plugin.manifest.id,
+              }).catch((e) => setError(String(e)))
+            }
+            onBrowser={(config) => void startAuth(connecting.plugin, config)}
+          />
+        )}
+        {auth && (
+          <Modal
+            title={`Connect ${auth.plugin.manifest.name}`}
+            onClose={() => {
+              void perform(() => request({ kind: 'cancel_auth', flow_id: auth.flowId }));
+              setAuth(undefined);
             }}
           >
-            {configure.manifest.fields.map((f) => (
-              <Field key={f.key} label={f.label}>
-                <input
-                  name={f.key}
-                  placeholder={f.placeholder}
-                  required={f.required}
-                  autoComplete="off"
-                />
-              </Field>
-            ))}
-            <button className="button full" disabled={busy}>
-              Continue in browser <ArrowUpRight size={16} />
-            </button>
-          </form>
-        </Modal>
-      )}
-      {auth && (
-        <Modal
-          title={`Connect ${auth.plugin.manifest.name}`}
-          onClose={() => {
-            void perform(() => request({ kind: 'cancel_auth', flow_id: auth.flowId }));
-            setAuth(undefined);
-          }}
-        >
-          {auth.progress.kind === 'select_role' ? (
-            <>
-              <p className="quiet">Choose the AWS account and role to use.</p>
-              {auth.progress.roles.map((r) => (
-                <button
-                  disabled={busy}
-                  className="role-choice"
-                  key={`${r.account_id}/${r.role}`}
-                  onClick={() =>
-                    void perform(() =>
-                      request<AuthProgress>({
-                        kind: 'choose_role',
-                        flow_id: auth.flowId,
-                        account_id: r.account_id,
-                        role: r.role,
-                      }),
-                    ).then((p) => {
-                      if (p?.kind === 'connected') {
-                        setAuth(undefined);
-                        setAccount(p.connection.id);
-                        setPage('vault');
+            {auth.progress.kind === 'select_role' ? (
+              <>
+                <p className="quiet">Choose the AWS account and role to use.</p>
+                <div className="choice-list">
+                  {auth.progress.roles.map((r) => (
+                    <button
+                      disabled={busy}
+                      className="choice"
+                      key={`${r.account_id}/${r.role}`}
+                      onClick={() =>
+                        void perform(() =>
+                          request<AuthProgress>({
+                            kind: 'choose_role',
+                            flow_id: auth.flowId,
+                            account_id: r.account_id,
+                            role: r.role,
+                          }),
+                        ).then((p) => proceed(auth.plugin, p))
                       }
-                    })
-                  }
-                >
-                  <strong>{r.account_name}</strong>
-                  <span>{r.role}</span>
-                  <ArrowUpRight size={16} />
-                </button>
-              ))}
-            </>
-          ) : (
-            <div className="auth-wait">
-              <ProviderMark name={auth.plugin.manifest.name} />
-              <h3>Finish connecting in your browser.</h3>
-              {auth.progress.kind === 'browser' && auth.progress.user_code && (
-                <>
-                  <p>Enter this code when prompted:</p>
-                  <code className="device-code">{auth.progress.user_code}</code>
-                </>
-              )}
-              <p className="quiet">This window will update when authorization is complete.</p>
-              <LoaderCircle size={19} className="spin" />
-            </div>
-          )}
-        </Modal>
-      )}
-    </div>
+                    >
+                      <strong>{r.account_name}</strong>
+                      <span className="mono">{r.role}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="auth-wait">
+                <p>Finish signing in to {auth.plugin.manifest.name} in your browser.</p>
+                {auth.progress.kind === 'browser' && auth.progress.user_code && (
+                  <>
+                    <span className="field-label">Enter this code when asked</span>
+                    <code className="device-code">{auth.progress.user_code}</code>
+                  </>
+                )}
+                <p className="waiting">
+                  <span className="pulse" aria-hidden="true" />
+                  Waiting for approval
+                </p>
+              </div>
+            )}
+          </Modal>
+        )}
+      </div>
+    </DialogHost.Provider>
   );
 }

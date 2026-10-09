@@ -1,7 +1,9 @@
 {
   "id": "official.vercel", "name": "Vercel", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
-  "description": "Keep project tokens and deliver secrets to your deployments.", "homepage": "https://vercel.com",
+  "description": "Keep account tokens and deliver secrets to your deployments.", "homepage": "https://vercel.com",
   "hosts": ["api.vercel.com", "vercel.com"], "auth": { "kind": "broker", "registration": "vercel" },
-  "operations": ["identity", "list_resources", "list_credentials", "validate_credential", "write_secret", "guide"], "fields": [],
-  "credential_fields": [{"key":"token","label":"Access token","placeholder":"Paste the token value","required":true}]
+  "operations": ["identity", "list_resources", "list_credentials", "create_credential", "validate_credential", "revoke_credential", "write_secret", "guide"], "fields": [],
+  "credential_fields": [{"key":"token","label":"Access token","placeholder":"Paste the token value","required":true,"env":"VERCEL_TOKEN"}],
+  "account_fields": [{"key":"token","label":"Access token","placeholder":"Paste the token","required":true,"env":"VERCEL_TOKEN"}],
+  "token_page": "https://vercel.com/account/settings/tokens", "account_credentials": true
 }

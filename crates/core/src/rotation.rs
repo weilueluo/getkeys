@@ -4,12 +4,38 @@ use anyhow::{Context, Result, bail, ensure};
 pub fn save_remote(
     vault: &Vault,
     connection_id: &str,
-    remote: RemoteCredential,
+    mut remote: RemoteCredential,
 ) -> Result<Credential> {
-    let previous = vault
-        .list::<Credential>("credential")?
-        .into_iter()
-        .find(|c| c.view.connection_id == connection_id && c.view.provider_id == remote.id);
+    let signed_in = (remote.credential_type == SIGN_IN)
+        .then(|| {
+            vault
+                .get::<Credential>("credential", &format!("signin-{connection_id}"))
+                .ok()
+        })
+        .flatten();
+    let previous = match signed_in {
+        Some(c) => Some(c),
+        None => vault
+            .list::<Credential>("credential")?
+            .into_iter()
+            .find(|c| c.view.connection_id == connection_id && c.view.provider_id == remote.id),
+    };
+    if remote.credential_type == SIGN_IN {
+        remote.credential_type = "access_token".into();
+    }
+    // The key an account signed in with is listed once, as its sign-in key, whose value the
+    // account's own session keeps current.
+    if let Some(mut c) = previous
+        .clone()
+        .filter(|c| c.view.credential_type == SIGN_IN)
+    {
+        c.view.provider_id = remote.id;
+        c.view.created_at = remote.created_at.or(c.view.created_at);
+        c.details.extend(remote.details);
+        c.view.problem = None;
+        vault.put("credential", &c.view.id, &c)?;
+        return Ok(c);
+    }
     let value = remote
         .value
         .or_else(|| previous.as_ref().and_then(|c| c.value.clone()));
@@ -40,8 +66,28 @@ pub fn save_remote(
         value_available: value.is_some(),
         can_rotate: remote.can_rotate || previous.as_ref().is_some_and(|c| c.view.can_rotate),
         retired: previous.as_ref().is_some_and(|c| c.view.retired),
+        fields: Vec::new(),
+        resource_name: previous
+            .as_ref()
+            .map(|c| c.view.resource_name.clone())
+            .unwrap_or_default(),
+        groups: previous
+            .as_ref()
+            .map(|c| c.view.groups.clone())
+            .unwrap_or_default(),
+        // The provider still lists it, so it exists.
+        problem: None,
     };
-    let c = Credential { view, value };
+    let details = if remote.details.is_empty() {
+        previous.map(|c| c.details).unwrap_or_default()
+    } else {
+        remote.details
+    };
+    let c = Credential {
+        view,
+        value,
+        details,
+    };
     vault.put("credential", &c.view.id, &c)?;
     Ok(c)
 }
@@ -76,6 +122,10 @@ impl App {
         ensure!(
             !old.view.retired && !candidate.view.retired && credential_id != replacement_id,
             "Choose an active, different replacement credential"
+        );
+        ensure!(
+            old.view.credential_type != SIGN_IN,
+            "Reconnect the account to replace the key it signed in with"
         );
         ensure!(
             old.view.connection_id == candidate.view.connection_id
@@ -166,7 +216,7 @@ impl App {
             None,
         )?;
         let old: Credential = self.vault.get("credential", &r.credential_id)?;
-        let tx = self.vault.db.unchecked_transaction()?;
+        let tx = self.vault.write()?;
         ensure!(
             self.vault.rotation(id)?.state == RotationState::ReadyToRetire,
             "Rotation changed. Refresh before continuing."
@@ -184,7 +234,7 @@ impl App {
         let c: Connection = self.vault.get("connection", &r.connection_id)?;
         ensure!(
             self.manifest(&c.view.plugin_id)?.version == r.plugin_version,
-            "Restore the rotation's plugin version before continuing"
+            "Restore the rotation's provider version before continuing"
         );
         match r.state {
             RotationState::Planned => create(&self.vault, r, |op| {
@@ -364,7 +414,7 @@ pub fn create(
             return Err(error);
         }
     };
-    let tx = vault.db.unchecked_transaction()?;
+    let tx = vault.write()?;
     let c = save_remote(vault, &r.connection_id, remote)?;
     r.candidate_id = Some(c.view.id);
     r.state = RotationState::Stored;
@@ -426,7 +476,7 @@ pub fn distribute(
         }
         let mut updated = binding.clone();
         updated.credential_id = c.view.id.clone();
-        let tx = vault.db.unchecked_transaction()?;
+        let tx = vault.write()?;
         vault.put("binding", &binding.id, &updated)?;
         r.updated_bindings.push(binding.id);
         vault.save_rotation(&r)?;
@@ -514,7 +564,7 @@ pub fn retire(
     vault.event("rotation.retired", &r.id)?;
     Ok(r)
 }
-fn mark_retired(vault: &Vault, old: &Credential) -> Result<()> {
+pub(crate) fn mark_retired(vault: &Vault, old: &Credential) -> Result<()> {
     let mut old = old.clone();
     old.view.retired = true;
     old.view.value_available = false;
@@ -569,7 +619,48 @@ mod tests {
                 fields: BTreeMap::from([("token".into(), format!("secret-{id}"))]),
             }),
             can_rotate: true,
+            details: BTreeMap::new(),
         }
+    }
+    #[test]
+    fn listing_the_key_an_account_signed_in_with_keeps_it_one_sign_in_key() {
+        let (_dir, vault, _) = fixture();
+        let mut key = save_remote(&vault, "connection", remote("AKIA1")).unwrap();
+        key.view.credential_type = SIGN_IN.into();
+        key.view.can_rotate = false;
+        key.view.resource = String::new();
+        vault.put("credential", &key.view.id, &key).unwrap();
+        let mut listed = remote("AKIA1");
+        listed.value = None;
+        listed.details = BTreeMap::from([("status".into(), "Active".into())]);
+        let saved = save_remote(&vault, "connection", listed).unwrap();
+        assert_eq!(saved.view.id, key.view.id);
+        assert_eq!(saved.view.credential_type, SIGN_IN);
+        assert!(!saved.view.can_rotate && saved.view.resource.is_empty());
+        assert_eq!(saved.value.unwrap().fields["token"], "secret-AKIA1");
+        assert_eq!(saved.details["status"], "Active");
+    }
+    #[test]
+    fn a_listed_token_marked_sign_in_is_the_accounts_sign_in_key() {
+        let (_dir, vault, _) = fixture();
+        let mut key = save_remote(&vault, "connection", remote("placeholder")).unwrap();
+        key.view.credential_type = SIGN_IN.into();
+        key.view.id = "signin-connection".into();
+        vault.put("credential", "signin-connection", &key).unwrap();
+        let mut listed = remote("tok_1");
+        listed.credential_type = SIGN_IN.into();
+        listed.value = None;
+        let saved = save_remote(&vault, "connection", listed).unwrap();
+        assert_eq!(saved.view.id, "signin-connection");
+        assert_eq!(saved.view.provider_id, "tok_1");
+        assert!(saved.value.is_some());
+        // Without a sign-in key to merge into, it is saved once as an ordinary key.
+        let mut other = remote("tok_2");
+        other.credential_type = SIGN_IN.into();
+        let first = save_remote(&vault, "other", other.clone()).unwrap();
+        let second = save_remote(&vault, "other", other).unwrap();
+        assert_eq!(first.view.id, second.view.id);
+        assert_eq!(second.view.credential_type, "access_token");
     }
     #[test]
     fn uncertain_creation_is_never_retried() {
@@ -733,8 +824,11 @@ mod tests {
                         name: "Destination".into(),
                         state: ConnectionState::Connected,
                         config: BTreeMap::new(),
+                        source: None,
                     },
                     identity_id: "test".into(),
+                    linked: Vec::new(),
+                    dedicated: None,
                     auth: AuthMaterial::Bearer {
                         token: "fixture".into(),
                         refresh_token: None,

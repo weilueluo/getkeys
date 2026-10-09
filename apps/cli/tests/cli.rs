@@ -36,7 +36,12 @@ fn cli_redacts_inventory_requires_deliberate_reveal_and_injects_only_into_the_ch
                     value_available: true,
                     can_rotate: false,
                     retired: false,
+                    fields: Vec::new(),
+                    resource_name: String::new(),
+                    groups: Vec::new(),
+                    problem: None,
                 },
+                details: BTreeMap::new(),
                 value: Some(SecretValue {
                     fields: BTreeMap::from([("token".into(), "fixture-secret".into())]),
                 }),
