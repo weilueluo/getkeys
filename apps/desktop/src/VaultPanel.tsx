@@ -77,6 +77,8 @@ type Item = {
   /** Found on this device; its account signs in with it, so the device keeps it current. */
   local: boolean;
   custom: boolean;
+  /** A provider's key kept on its own, outside any account. */
+  own: boolean;
 };
 /** Keys with a secret, keys without one, or a group's keys (`group:<name>`). */
 type View = 'ready' | 'empty' | `group:${string}`;
@@ -91,7 +93,7 @@ const storedGroups = (): string[] => {
   }
 };
 /** Which keys Refresh covers. */
-export type RefreshScope = { connections?: string[]; label?: string };
+export type RefreshScope = { connections?: string[]; keys?: string[]; label?: string };
 
 type Props = Controller & {
   search: string;
@@ -128,8 +130,25 @@ export function VaultPanel({
             secretless: false,
             local: false,
             custom: true,
+            own: false,
           },
         ];
+      if (c.plugin_id) {
+        const manifest = snapshot.plugins.find((p) => p.manifest.id === c.plugin_id)?.manifest;
+        if (!manifest) return [];
+        return [
+          {
+            c,
+            manifest,
+            provider: manifest.name,
+            place: c.id.startsWith('found:') ? 'On this device' : 'Added by you',
+            secretless: false,
+            local: false,
+            custom: false,
+            own: true,
+          },
+        ];
+      }
       const connection = snapshot.connections.find((x) => x.id === c.connection_id);
       const manifest = snapshot.plugins.find(
         (p) => p.manifest.id === connection?.plugin_id,
@@ -148,6 +167,7 @@ export function VaultPanel({
           secretless,
           local,
           custom: false,
+          own: false,
         },
       ];
     })
@@ -239,10 +259,13 @@ export function VaultPanel({
             ),
           ),
         ],
+        keys: inGroup.filter((i) => i.own).map((i) => i.c.id),
         label: activeGroup,
       }
     : {};
-  const canRefresh = scope.connections ? scope.connections.length > 0 : active.length > 0;
+  const canRefresh = scope.connections
+    ? scope.connections.length + (scope.keys?.length ?? 0) > 0
+    : active.length > 0 || snapshot.plugins.some((p) => p.installed);
   const newKey = (
     <button className="button" disabled={busy} onClick={() => setForm({})}>
       <Plus size={14} /> New key
@@ -265,8 +288,8 @@ export function VaultPanel({
             </div>
           }
         >
-          Add GitHub, AWS, Vercel, or Supabase. GetKeys brings in the keys already on this device
-          and in your accounts.
+          Add a provider such as OpenAI, GitHub, or AWS. GetKeys brings in the keys already on this
+          device and in your accounts.
         </Empty>
         {form && <KeyForm {...{ snapshot, busy, perform }} close={() => setForm(undefined)} />}
       </>
@@ -618,21 +641,28 @@ function KeyItem({
   const { c, connection, manifest, provider, place, secretless, local, custom } = item;
   const { busy, perform, snapshot } = control;
   const [secret, reveal] = useReveal(c.id, perform);
-  const [dialog, setDialog] = useState<'rotate' | 'guided' | 'delete'>();
+  const [dialog, setDialog] = useState<'rotate' | 'guided' | 'native' | 'paste' | 'delete'>();
   const primary = primaryField(c);
   const value = primary && shown(primary, secret);
   const hidden = c.fields.some((f) => f.secret && f.available);
   const rotation = rotationsFor(snapshot, c.id).find((r) => !isFinished(r));
   const guided = !!manifest?.operations.includes('guide');
+  const native = !!connection && !!manifest?.operations.includes('rotate_credential');
+  // Without a way to rotate through the provider, its page opens and the new value is pasted.
+  const pastes = !!manifest?.token_page && inputs(manifest.credential_fields).length > 0;
   const rotate = rotation
     ? expand
     : custom
       ? edit
       : c.can_rotate || local
         ? () => setDialog('rotate')
-        : guided
-          ? () => setDialog('guided')
-          : undefined;
+        : native
+          ? () => setDialog('native')
+          : guided
+            ? () => setDialog('guided')
+            : pastes
+              ? () => setDialog('paste')
+              : undefined;
   const copy = (f: KeyField) =>
     void perform(
       () => copyCredential(c.id, f.key),
@@ -763,6 +793,8 @@ function KeyItem({
           {dialog === 'guided' && (
             <GuidedDialog {...control} item={item} close={close} done={expand} />
           )}
+          {dialog === 'native' && <NativeRotateDialog {...control} item={item} close={close} />}
+          {dialog === 'paste' && <PasteRotateDialog {...control} item={item} close={close} />}
           {dialog === 'delete' && <DeleteDialog {...control} item={item} close={close} />}
         </>
       )}
@@ -782,7 +814,7 @@ function KeyDetails({
   copy: (f: KeyField) => void;
   groups: string[];
 }) {
-  const { c: credential, connection, custom } = item;
+  const { c: credential, connection, custom, own } = item;
   const { busy, perform, snapshot } = control;
   const [binding, setBinding] = useState(false);
   const bindings = snapshot.bindings.filter((b) => b.credential_id === credential.id);
@@ -855,8 +887,12 @@ function KeyDetails({
       </div>
       <div className="key-details-side">
         <dl className="metadata">
-          <dt>{custom ? 'Provider' : 'Account'}</dt>
-          <dd>{connection?.name ?? 'None, added by hand'}</dd>
+          <dt>{custom || own ? 'Provider' : 'Account'}</dt>
+          <dd>
+            {own
+              ? `${item.provider}, kept on its own`
+              : (connection?.name ?? 'None, added by hand')}
+          </dd>
           {credential.resource && (
             <>
               <dt>Belongs to</dt>
@@ -877,7 +913,7 @@ function KeyDetails({
           )}
         </dl>
         <GroupEditor {...control} credential={credential} groups={groups} />
-        {!custom && (
+        {!custom && !own && (
           <div className="detail-section">
             <div className="detail-section-heading">
               <h3>
@@ -1198,6 +1234,110 @@ function LocalKeyDialog({
   );
 }
 
+/** Has the provider replace the key with a new one in a single step. */
+function NativeRotateDialog({ item, close, busy, perform }: DialogProps) {
+  const { c, manifest } = item;
+  return (
+    <Modal title={`Rotate ${c.name}?`} onClose={close}>
+      <p>
+        {manifest?.name} replaces this key with a new one and the old value stops working right
+        away. Update anything that uses it with the new value.
+      </p>
+      <div className="modal-footer">
+        <button type="button" className="button outline" onClick={close}>
+          Cancel
+        </button>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={() =>
+            void perform(
+              () => request<CredentialView>({ kind: 'rotate_now', credential_id: c.id }),
+              'Key rotated',
+            ).then((r) => {
+              if (r) close();
+            })
+          }
+        >
+          <RotateCw size={14} strokeWidth={1.75} /> Rotate
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Opens the provider's page to make a new key, then takes its value in place of the old one. */
+function PasteRotateDialog({ item, close, busy, perform }: DialogProps) {
+  const { c } = item;
+  const manifest = item.manifest!;
+  const fields = inputs(manifest.credential_fields);
+  return (
+    <Modal title={`Rotate ${c.name}`} onClose={close}>
+      <p>
+        Create a new key in {manifest.name} and paste it here. GetKeys checks it, then keeps it in
+        place of the old one. Delete the old key in {manifest.name} once nothing uses it.
+      </p>
+      <button
+        type="button"
+        className="button outline full"
+        disabled={busy}
+        onClick={() =>
+          void perform(() => request({ kind: 'open_token_page', plugin_id: manifest.id }))
+        }
+      >
+        Open {manifest.name} <ArrowUpRight size={14} />
+      </button>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const data = new FormData(e.currentTarget);
+          void perform(
+            () =>
+              request<CredentialView>({
+                kind: 'save_key',
+                credential_id: c.id,
+                plugin_id: manifest.id,
+                name: '',
+                fields: Object.fromEntries(
+                  fields
+                    .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
+                    .filter(([, value]) => value !== ''),
+                ),
+              }),
+            'Key rotated',
+          ).then((r) => {
+            if (r) close();
+          });
+        }}
+      >
+        {fields
+          .filter((f) => f.secret)
+          .map((f, i) => (
+            <Field key={f.key} label={`New ${f.label.toLowerCase()}`}>
+              <input
+                type="password"
+                name={f.key}
+                required={f.required}
+                placeholder={f.placeholder}
+                autoComplete="new-password"
+                spellCheck={false}
+                autoFocus={i === 0}
+              />
+            </Field>
+          ))}
+        <div className="modal-footer">
+          <button type="button" className="button outline" onClick={close}>
+            Cancel
+          </button>
+          <button className="button" disabled={busy}>
+            Save new key
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /** Revokes a key with its provider, or walks the person through deleting it there. */
 function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
   const { c } = item;
@@ -1245,8 +1385,8 @@ function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
   return (
     <Modal title={`Delete ${c.name}?`} onClose={close}>
       <p>
-        {!manifest
-          ? 'GetKeys removes it from this device. You added it by hand, so nothing changes anywhere else.'
+        {!manifest || (item.own && !manifest.token_page)
+          ? 'GetKeys removes it from this device. Nothing changes anywhere else.'
           : revokes
             ? `GetKeys revokes it in ${manifest.name} and removes it from this device. Anything still using it stops working.`
             : `GetKeys removes it from this device and opens ${manifest.name} so you can delete it there too.`}
@@ -1288,23 +1428,35 @@ function KeyForm({
   credential,
   close,
 }: Controller & { credential?: CredentialView; close: () => void }) {
+  // A choice is an account id, or `plugin:<id>` for a key kept on its own with that provider.
   const manifestOf = (id: string) =>
     snapshot.plugins.find(
-      (p) => p.manifest.id === snapshot.connections.find((c) => c.id === id)?.plugin_id,
+      (p) =>
+        p.manifest.id ===
+        (id.startsWith(PLUGIN)
+          ? id.slice(PLUGIN.length)
+          : snapshot.connections.find((c) => c.id === id)?.plugin_id),
     )?.manifest;
   const accounts = snapshot.connections.filter((c) => {
     const m = manifestOf(c.id);
     return c.state !== 'disconnected' && m && inputs(m.credential_fields).length > 0;
   });
-  const [account, setAccount] = useState(
-    credential ? credential.connection_id || CUSTOM : (accounts[0]?.id ?? CUSTOM),
+  const providers = snapshot.plugins.filter(
+    (p) => p.installed && inputs(p.manifest.credential_fields).length > 0,
   );
+  const [account, setAccount] = useState(
+    credential
+      ? credential.connection_id || CUSTOM
+      : (accounts[0]?.id ?? (providers[0] ? PLUGIN + providers[0].manifest.id : CUSTOM)),
+  );
+  const own = account.startsWith(PLUGIN);
   const [resources, setResources] = useState<Resource[] | undefined>(credential && []);
   const [resource, setResource] = useState(credential?.resource ?? '');
   const manifest = manifestOf(account);
   const accountToken = !!manifest?.account_credentials;
   useEffect(() => {
-    if (credential || !account || account === CUSTOM) return;
+    if (own) setResources([]);
+    if (credential || !account || account === CUSTOM || own) return;
     let current = true;
     setResources(undefined);
     void perform(() => request<Resource[]>({ kind: 'resources', connection_id: account })).then(
@@ -1321,7 +1473,7 @@ function KeyForm({
     return () => {
       current = false;
     };
-  }, [account, accountToken, credential, perform]);
+  }, [account, accountToken, credential, own, perform]);
   const prefill = (key: string) => credential?.fields.find((f) => f.key === key)?.value ?? '';
   const providerSelect = !credential && (
     <Field label="Provider">
@@ -1329,6 +1481,11 @@ function KeyForm({
         {accounts.map((c) => (
           <option key={c.id} value={c.id}>
             {manifestOf(c.id)?.name} · {c.name}
+          </option>
+        ))}
+        {providers.map((p) => (
+          <option key={p.manifest.id} value={PLUGIN + p.manifest.id}>
+            {p.manifest.name} · Key only
           </option>
         ))}
         <option value={CUSTOM}>None · any other service</option>
@@ -1351,6 +1508,27 @@ function KeyForm({
           e.preventDefault();
           if (!manifest) return;
           const data = new FormData(e.currentTarget);
+          const fields = Object.fromEntries(
+            inputs(manifest.credential_fields)
+              .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
+              .filter(([, value]) => value !== ''),
+          );
+          if (own) {
+            void perform(
+              () =>
+                request<CredentialView>({
+                  kind: 'save_key',
+                  credential_id: null,
+                  plugin_id: manifest.id,
+                  name: String(data.get('name')),
+                  fields,
+                }),
+              'Key saved',
+            ).then((result) => {
+              if (result) close();
+            });
+            return;
+          }
           void perform(
             () =>
               request<CredentialView>({
@@ -1362,11 +1540,7 @@ function KeyForm({
                   name: String(data.get('name')),
                   project: credential?.project ?? '',
                   environment: credential?.environment ?? '',
-                  fields: Object.fromEntries(
-                    inputs(manifest.credential_fields)
-                      .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
-                      .filter(([, value]) => value !== ''),
-                  ),
+                  fields,
                 },
               }),
             'Key saved',
@@ -1421,6 +1595,8 @@ function KeyForm({
     </Modal>
   );
 }
+
+const PLUGIN = 'plugin:';
 
 type Row = { variable: string; value: string; secret: boolean };
 const variableName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9_]/g, '_');

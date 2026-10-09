@@ -77,6 +77,7 @@ pub fn save_remote(
             .unwrap_or_default(),
         // The provider still lists it, so it exists.
         problem: None,
+        plugin_id: String::new(),
     };
     let details = if remote.details.is_empty() {
         previous.map(|c| c.details).unwrap_or_default()

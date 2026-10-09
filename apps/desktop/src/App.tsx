@@ -108,7 +108,12 @@ export function App() {
   const proceed = (plugin: PluginView, progress?: AuthProgress, rotated = false) => {
     if (!progress) return;
     setConnecting(undefined);
-    if (progress.kind === 'connected') {
+    if (progress.kind === 'key_saved') {
+      setAuth(undefined);
+      void scan();
+      changePage('vault');
+      setNotice(`Saved ${progress.credential.name}`);
+    } else if (progress.kind === 'connected') {
       setAuth(undefined);
       void scan();
       if (rotated) setNotice('Sign-in key replaced');
@@ -183,6 +188,17 @@ export function App() {
     const outcome = await run(`Adding ${name}`, { plugin: plugin.manifest.id });
     void scan();
     if (!outcome) return;
+    if (plugin.manifest.kind === 'declarative') {
+      // Nothing to sign in to: its keys come from this device or are added by hand.
+      changePage('vault');
+      if (!outcome.failed.length || outcome.cancelled)
+        setNotice(
+          outcome.added
+            ? `Added ${name} · ${keyCount(outcome.added)}`
+            : `Added ${name} · add its keys with New key`,
+        );
+      return;
+    }
     const accounts = outcome.snapshot.connections.filter(
       (c) => c.plugin_id === plugin.manifest.id && c.state !== 'disconnected',
     );

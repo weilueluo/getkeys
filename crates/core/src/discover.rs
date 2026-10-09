@@ -1,45 +1,85 @@
-//! Finds provider sessions that already exist on this device, so connecting is one click:
-//! CLI logins (gh, vercel, supabase), AWS profiles, and well-known environment variables.
+//! Finds keys and sign-ins that already exist on this device, as each provider's manifest
+//! describes: environment variables, CLI session files, commands, and OS keychains.
 use crate::{model::AuthMaterial, now};
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine;
+use getkeys_plugin_api::{FileFormat, Manifest, SecretValue, Source, SourceKind, SourceRole};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::PathBuf, process::Command};
 use ts_rs::TS;
 
-const GITHUB: &str = "official.github";
-const VERCEL: &str = "official.vercel";
-const SUPABASE: &str = "official.supabase";
-const AWS: &str = "official.aws";
-
 #[derive(Clone, Debug, Serialize, Deserialize, TS, PartialEq)]
 pub struct Discovery {
     pub id: String,
     pub plugin_id: String,
+    /// Where it was found, such as "GitHub CLI" or "Environment".
     pub source: String,
     pub account: String,
     pub connected: bool,
+    /// A key listed on its own rather than an account sign-in.
+    #[serde(default)]
+    pub key: bool,
 }
 
 pub enum Found {
     Material(Box<AuthMaterial>),
     SignIn(BTreeMap<String, String>),
+    Key(SecretValue),
+}
+
+/// The ID a source's discoveries start with.
+pub fn source_id(s: &Source) -> String {
+    match &s.from {
+        SourceKind::Env { var } => format!("env:{var}"),
+        SourceKind::GhCli => "gh".into(),
+        SourceKind::AwsEnv => "env:AWS".into(),
+        SourceKind::AwsProfiles => "aws_profile".into(),
+        SourceKind::AwsSso => "aws_sso".into(),
+        _ => s.id.clone(),
+    }
+}
+
+/// Finds the manifest and source a discovery ID came from.
+fn resolve<'a>(manifests: &'a [Manifest], id: &str) -> Option<(&'a Manifest, &'a Source, String)> {
+    let (base, name) = match id.split_once(':') {
+        Some((k @ ("gh" | "aws_profile" | "aws_sso"), name)) => (k.to_owned(), name.to_owned()),
+        _ => (id.to_owned(), String::new()),
+    };
+    manifests.iter().find_map(|m| {
+        m.sources
+            .iter()
+            .find(|s| source_id(s) == base)
+            .map(|s| (m, s, name.clone()))
+    })
 }
 
 /// Names an account's sign-in key after where it came from.
-pub fn sign_in_name(source: Option<&str>) -> String {
-    let (kind, name) = source.map_or(("", ""), |s| s.split_once(':').unwrap_or((s, "")));
-    match kind {
-        "gh" => "GitHub CLI".into(),
-        "vercel" => "Vercel CLI".into(),
-        "supabase" => "Supabase CLI".into(),
-        "env" if name == "AWS" => "Environment keys".into(),
-        "env" => format!("${name}"),
-        "aws_profile" => format!("{name} profile"),
-        "token" => "Pasted token".into(),
-        "getkeys" => "GetKeys token".into(),
-        _ => "Browser sign-in".into(),
+pub fn sign_in_name(manifests: &[Manifest], source: Option<&str>) -> String {
+    match source {
+        None => "Browser sign-in".into(),
+        Some("token") => "Pasted token".into(),
+        Some("getkeys") => "GetKeys token".into(),
+        Some("env:AWS") => "Environment keys".into(),
+        Some(s) if s.starts_with("env:") => format!("${}", &s[4..]),
+        Some(s) if s.starts_with("aws_profile:") => format!("{} profile", &s[12..]),
+        Some(s) => resolve(manifests, s)
+            .map(|(m, src, _)| label(m, src))
+            .unwrap_or_else(|| "Local sign-in".into()),
+    }
+}
+
+fn label(m: &Manifest, s: &Source) -> String {
+    if !s.label.is_empty() {
+        return s.label.clone();
+    }
+    match &s.from {
+        SourceKind::Env { var } => format!("${var}"),
+        SourceKind::GhCli => "GitHub CLI".into(),
+        SourceKind::AwsEnv => "Environment".into(),
+        SourceKind::AwsProfiles => "AWS CLI profile".into(),
+        SourceKind::AwsSso => "IAM Identity Center".into(),
+        _ => format!("{} CLI", m.name),
     }
 }
 
@@ -78,64 +118,85 @@ pub fn friendly_name(name: &str) -> String {
     format!("{short} ({})", parts[4])
 }
 
-pub fn scan() -> Vec<Discovery> {
-    let mut found = Vec::new();
-    let mut add = |id: String, plugin_id: &str, source: &str, account: &str| {
-        found.push(Discovery {
-            id,
-            plugin_id: plugin_id.into(),
-            source: source.into(),
-            account: account.into(),
-            connected: false,
-        })
-    };
-    for login in gh_accounts() {
-        let id = if login.is_empty() {
-            "gh".into()
-        } else {
-            format!("gh:{login}")
-        };
-        add(id, GITHUB, "GitHub CLI", &login);
-    }
-    for (var, plugin, source) in ENV_TOKENS {
-        if env(var).is_some() {
-            add(format!("env:{var}"), plugin, source, var);
+/// Everything the given providers' sources find on this device. Values are not kept.
+pub fn scan(manifests: &[Manifest]) -> Vec<Discovery> {
+    let mut found: Vec<Discovery> = Vec::new();
+    for m in manifests {
+        for s in &m.sources {
+            let base = source_id(s);
+            let mut here = Vec::new();
+            let mut add = |id: String, account: &str| {
+                here.push(Discovery {
+                    id,
+                    plugin_id: m.id.clone(),
+                    source: label(m, s),
+                    account: account.into(),
+                    connected: false,
+                    key: s.role == SourceRole::Key,
+                })
+            };
+            match &s.from {
+                SourceKind::GhCli => {
+                    for login in gh_accounts() {
+                        if login.is_empty() {
+                            add("gh".into(), "");
+                        } else {
+                            add(format!("gh:{login}"), &login);
+                        }
+                    }
+                }
+                SourceKind::AwsEnv => {
+                    if env("AWS_ACCESS_KEY_ID").is_some() && env("AWS_SECRET_ACCESS_KEY").is_some()
+                    {
+                        add(base, "AWS_ACCESS_KEY_ID");
+                    }
+                }
+                SourceKind::AwsProfiles => {
+                    for (profile, _) in aws_static_profiles() {
+                        add(format!("aws_profile:{profile}"), &profile);
+                    }
+                }
+                SourceKind::AwsSso => {
+                    let mut start_urls = Vec::new();
+                    for (profile, sso) in aws_sso_profiles() {
+                        if !start_urls.contains(&sso["start_url"]) {
+                            start_urls.push(sso["start_url"].clone());
+                            add(format!("aws_sso:{profile}"), &profile);
+                        }
+                    }
+                }
+                SourceKind::Env { var } => {
+                    if env(var).is_some() {
+                        add(base, var);
+                    }
+                }
+                SourceKind::Keyring { hint, .. } if !cfg!(windows) => {
+                    // Reading the macOS/Linux keychain prompts, so only a hint counts while scanning.
+                    if !hint.is_empty() && expand(hint).is_some_and(|p| p.exists()) {
+                        add(base, "");
+                    }
+                }
+                _ => {
+                    // Sources sharing a label are one place, such as a CLI's file and keychain.
+                    let label = label(m, s);
+                    let seen = found
+                        .iter()
+                        .any(|d| d.plugin_id == m.id && d.source == label && d.account.is_empty());
+                    if !seen && read(s).is_ok_and(|(v, _)| !v.is_empty()) {
+                        add(base, "");
+                    }
+                }
+            }
+            found.extend(here);
         }
-    }
-    if vercel_auth_file().is_some() {
-        add("vercel".into(), VERCEL, "Vercel CLI", "");
-    }
-    if supabase_present() {
-        add("supabase".into(), SUPABASE, "Supabase CLI", "");
-    }
-    if env("AWS_ACCESS_KEY_ID").is_some() && env("AWS_SECRET_ACCESS_KEY").is_some() {
-        add("env:AWS".into(), AWS, "Environment", "AWS_ACCESS_KEY_ID");
-    }
-    let mut start_urls = Vec::new();
-    for (profile, sso) in aws_sso_profiles() {
-        if !start_urls.contains(&sso["start_url"]) {
-            start_urls.push(sso["start_url"].clone());
-            add(
-                format!("aws_sso:{profile}"),
-                AWS,
-                "IAM Identity Center",
-                &profile,
-            );
-        }
-    }
-    for (profile, _) in aws_static_profiles() {
-        add(
-            format!("aws_profile:{profile}"),
-            AWS,
-            "AWS CLI profile",
-            &profile,
-        );
     }
     found
 }
 
-pub fn load(id: &str) -> Result<(String, Found)> {
-    let oauth = |token: String, expires_at| {
+/// Reads what a discovery found.
+pub fn load(manifests: &[Manifest], id: &str) -> Result<(String, Found)> {
+    let (m, s, name) = resolve(manifests, id).context("Unknown local source")?;
+    let bearer = |token: String, expires_at| {
         Found::Material(Box::new(AuthMaterial::Bearer {
             token,
             refresh_token: None,
@@ -143,91 +204,250 @@ pub fn load(id: &str) -> Result<(String, Found)> {
             broker_registration: None,
         }))
     };
-    let (kind, name) = id.split_once(':').unwrap_or((id, ""));
-    Ok(match kind {
-        "gh" => {
+    let found = match &s.from {
+        SourceKind::GhCli => {
             let mut args = vec!["auth", "token", "--hostname", "github.com"];
             if !name.is_empty() {
-                ensure!(valid_login(name), "Unknown GitHub CLI account");
-                args.extend(["--user", name]);
+                ensure!(valid_login(&name), "Unknown GitHub CLI account");
+                args.extend(["--user", &name]);
             }
             let token =
                 run("gh", &args).context("GitHub CLI is not signed in. Run `gh auth login`.")?;
-            (GITHUB.into(), oauth(token, None))
+            bearer(token, None)
         }
-        "env" if name == "AWS" => (
-            AWS.into(),
+        SourceKind::AwsEnv => Found::Material(Box::new(AuthMaterial::Aws {
+            access_key_id: env("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID is not set")?,
+            secret_access_key: env("AWS_SECRET_ACCESS_KEY")
+                .context("AWS_SECRET_ACCESS_KEY is not set")?,
+            session_token: env("AWS_SESSION_TOKEN"),
+            expires_at: None,
+            sso: None,
+        })),
+        SourceKind::AwsSso => {
+            let (_, config) = aws_sso_profiles()
+                .into_iter()
+                .find(|(p, _)| *p == name)
+                .context("This AWS profile no longer uses IAM Identity Center")?;
+            Found::SignIn(config)
+        }
+        SourceKind::AwsProfiles => {
+            let (_, keys) = aws_static_profiles()
+                .into_iter()
+                .find(|(p, _)| *p == name)
+                .context("This AWS profile no longer has access keys")?;
             Found::Material(Box::new(AuthMaterial::Aws {
-                access_key_id: env("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID is not set")?,
-                secret_access_key: env("AWS_SECRET_ACCESS_KEY")
-                    .context("AWS_SECRET_ACCESS_KEY is not set")?,
-                session_token: env("AWS_SESSION_TOKEN"),
+                access_key_id: keys["aws_access_key_id"].clone(),
+                secret_access_key: keys["aws_secret_access_key"].clone(),
+                session_token: keys.get("aws_session_token").cloned(),
                 expires_at: None,
                 sso: None,
-            })),
-        ),
-        "env" => {
-            let (_, plugin, _) = ENV_TOKENS
-                .iter()
-                .find(|(var, ..)| *var == name)
-                .context("Unknown environment source")?;
-            let token = env(name).with_context(|| format!("{name} is no longer set"))?;
-            ((*plugin).into(), oauth(token, None))
+            }))
         }
-        "vercel" => {
-            let (mut token, mut expires) = vercel_token()?;
-            if expires.is_some_and(|e| e <= now() + 60) {
-                // Any CLI call renews the CLI's own session.
-                let _ = run("vercel", &["whoami"]);
-                (token, expires) = vercel_token()?;
+        _ => {
+            let (value, expires) = m
+                .sources
+                .iter()
+                .filter(|o| o.id != s.id && label(m, o) == label(m, s))
+                .fold(read(s), |r, other| {
+                    r.or_else(|e| read(other).map_err(|_| e))
+                })?;
+            ensure!(!value.is_empty(), "{} has no key any more", label(m, s));
+            if s.role == SourceRole::Key {
+                Found::Key(SecretValue {
+                    fields: BTreeMap::from([(s.field.clone(), value)]),
+                })
+            } else {
+                bearer(value, expires)
+            }
+        }
+    };
+    Ok((m.id.clone(), found))
+}
+
+/// Reads a generic source: its value and, for sessions, when it expires.
+fn read(s: &Source) -> Result<(String, Option<i64>)> {
+    let missing = || {
+        format!(
+            "{} isn't signed in",
+            if s.label.is_empty() { &s.id } else { &s.label }
+        )
+    };
+    match &s.from {
+        SourceKind::Env { var } => Ok((
+            env(var).with_context(|| format!("{var} is no longer set"))?,
+            None,
+        )),
+        SourceKind::Command { argv } => {
+            let (program, args) = argv.split_first().context("Empty command")?;
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            Ok((run(program, &args).with_context(missing)?, None))
+        }
+        SourceKind::Keyring {
+            service,
+            user,
+            target,
+            go_keyring,
+            ..
+        } => {
+            #[cfg(windows)]
+            let entry = keyring::Entry::new_with_target(
+                if target.is_empty() { service } else { target },
+                service,
+                user,
+            );
+            #[cfg(not(windows))]
+            let entry = {
+                let _ = target;
+                keyring::Entry::new(service, user)
+            };
+            let bytes = entry?.get_secret().ok().with_context(missing)?;
+            let value = if *go_keyring {
+                decode_go_keyring(&bytes)
+            } else {
+                String::from_utf8(bytes).ok().map(|s| s.trim().to_owned())
+            };
+            Ok((value.filter(|v| !v.is_empty()).with_context(missing)?, None))
+        }
+        SourceKind::File {
+            paths,
+            format,
+            pointer,
+            expires_pointer,
+            renew,
+        } => {
+            let read_file = || -> Result<(String, Option<i64>)> {
+                let path = newest(paths).with_context(missing)?;
+                let text = std::fs::read_to_string(path)?;
+                let (value, expires) = match format {
+                    FileFormat::Text => (Some(text.trim().to_owned()), None),
+                    FileFormat::Ini => (ini_value(&text, pointer), None),
+                    FileFormat::Json | FileFormat::Toml => {
+                        let v: Value = if *format == FileFormat::Json {
+                            serde_json::from_str(&text)?
+                        } else {
+                            serde_json::to_value(toml::from_str::<toml::Value>(&text)?)?
+                        };
+                        (
+                            v.pointer(pointer)
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            (!expires_pointer.is_empty())
+                                .then(|| v.pointer(expires_pointer).and_then(seconds))
+                                .flatten(),
+                        )
+                    }
+                };
+                Ok((
+                    value.filter(|v| !v.is_empty()).with_context(missing)?,
+                    expires,
+                ))
+            };
+            let (mut value, mut expires) = read_file()?;
+            if expires.is_some_and(|e| e <= now() + 60)
+                && let Some((program, args)) = renew.split_first()
+            {
+                // Any call renews the CLI's own session.
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let _ = run(program, &args);
+                (value, expires) = read_file()?;
             }
             ensure!(
                 expires.is_none_or(|e| e > now()),
-                "The Vercel CLI session expired. Run `vercel login`."
+                "The {} session expired. Sign in to it again.",
+                if s.label.is_empty() { "CLI" } else { &s.label }
             );
-            (VERCEL.into(), oauth(token, expires))
+            Ok((value, expires))
         }
-        "supabase" => (
-            SUPABASE.into(),
-            oauth(
-                supabase_token().context("Supabase CLI is not signed in. Run `supabase login`.")?,
-                None,
-            ),
-        ),
-        "aws_sso" => {
-            let (_, config) = aws_sso_profiles()
-                .into_iter()
-                .find(|(p, _)| p == name)
-                .context("This AWS profile no longer uses IAM Identity Center")?;
-            (AWS.into(), Found::SignIn(config))
-        }
-        "aws_profile" => {
-            let (_, keys) = aws_static_profiles()
-                .into_iter()
-                .find(|(p, _)| p == name)
-                .context("This AWS profile no longer has access keys")?;
-            (
-                AWS.into(),
-                Found::Material(Box::new(AuthMaterial::Aws {
-                    access_key_id: keys["aws_access_key_id"].clone(),
-                    secret_access_key: keys["aws_secret_access_key"].clone(),
-                    session_token: keys.get("aws_session_token").cloned(),
-                    expires_at: None,
-                    sso: None,
-                })),
-            )
-        }
-        _ => bail!("Unknown local source"),
-    })
+        _ => bail!("This source is read by its own reader"),
+    }
 }
 
-const ENV_TOKENS: [(&str, &str, &str); 5] = [
-    ("GH_TOKEN", GITHUB, "Environment"),
-    ("GITHUB_TOKEN", GITHUB, "Environment"),
-    ("VERCEL_TOKEN", VERCEL, "Environment"),
-    ("SUPABASE_ACCESS_TOKEN", SUPABASE, "Environment"),
-    ("SUPABASE_TOKEN", SUPABASE, "Environment"),
-];
+/// Seconds since the epoch, from seconds, milliseconds, or an RFC 3339 date.
+fn seconds(v: &Value) -> Option<i64> {
+    match v {
+        Value::Number(n) => n
+            .as_i64()
+            .map(|n| if n > 100_000_000_000 { n / 1000 } else { n }),
+        Value::String(s) => {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .ok()
+                .map(|t| t.unix_timestamp())
+        }
+        _ => None,
+    }
+}
+
+fn ini_value(text: &str, pointer: &str) -> Option<String> {
+    let (section, key) = pointer.rsplit_once('.').unwrap_or(("", pointer));
+    if section.is_empty() {
+        return text.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim().eq_ignore_ascii_case(key)).then(|| v.trim().to_owned())
+        });
+    }
+    ini(text)
+        .into_iter()
+        .find(|(s, _)| s == section)
+        .and_then(|(_, keys)| keys.get(&key.to_lowercase()).cloned())
+}
+
+/// Expands `~`, `{home}`, `{config}`, `{data}`, `{local_data}` and `{env:NAME}` at the start of a
+/// path. A `*` in the last part matches any file name.
+pub fn expand(path: &str) -> Option<PathBuf> {
+    let dirs = directories::BaseDirs::new()?;
+    let (root, rest) = if let Some(rest) = path.strip_prefix("~/") {
+        (dirs.home_dir().to_owned(), rest)
+    } else {
+        let (name, rest) = path.strip_prefix('{')?.split_once('}')?;
+        let rest = rest.trim_start_matches(['/', '\\']);
+        let root = match name {
+            "home" => dirs.home_dir().to_owned(),
+            "config" => dirs.config_dir().to_owned(),
+            "data" => dirs.data_dir().to_owned(),
+            "local_data" => dirs.data_local_dir().to_owned(),
+            n => PathBuf::from(env(n.strip_prefix("env:")?)?),
+        };
+        (root, rest)
+    };
+    Some(
+        rest.split(['/', '\\'])
+            .filter(|p| !p.is_empty())
+            .fold(root, |p, part| p.join(part)),
+    )
+}
+
+/// The most recently changed file among `paths`.
+fn newest(paths: &[String]) -> Option<PathBuf> {
+    let mut files = Vec::new();
+    for path in paths.iter().filter_map(|p| expand(p)) {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let Some((prefix, suffix)) = name.split_once('*') else {
+            files.push(path);
+            continue;
+        };
+        let (prefix, suffix) = (prefix.to_owned(), suffix.to_owned());
+        let Some(Ok(entries)) = path.parent().map(std::fs::read_dir) else {
+            continue;
+        };
+        files.extend(
+            entries
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|f| {
+                    f.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                        n.len() >= prefix.len() + suffix.len()
+                            && n.starts_with(&prefix)
+                            && n.ends_with(&suffix)
+                    })
+                }),
+        );
+    }
+    files
+        .into_iter()
+        .filter(|p| p.is_file())
+        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, p)| p)
+}
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name)
@@ -242,25 +462,29 @@ fn home() -> Option<PathBuf> {
 
 /// Runs a CLI without a console window; returns its stdout even when it exits non-zero.
 fn exec(program: &str, args: &[&str]) -> Option<(bool, String)> {
-    let mut command = if cfg!(windows) && program == "vercel" {
-        // npm installs the Vercel CLI as a .cmd shim, which only cmd.exe resolves.
-        let mut c = Command::new("cmd");
-        c.args(["/D", "/C", "vercel"]);
-        c
-    } else {
-        Command::new(program)
+    let spawn = |mut command: Command| {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        command
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
     };
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
+    let mut direct = Command::new(program);
+    direct.args(args);
+    let output = match spawn(direct) {
+        // npm installs CLIs as .cmd shims, which only cmd.exe resolves.
+        Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::NotFound => {
+            let mut shim = Command::new("cmd");
+            shim.args(["/D", "/C", program]).args(args);
+            spawn(shim)
+        }
+        other => other,
     }
-    let output = command
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    .ok()?;
     Some((
         output.status.success(),
         String::from_utf8(output.stdout).ok()?.trim().to_owned(),
@@ -296,72 +520,8 @@ fn valid_login(login: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
-/// The Vercel CLI keeps its session wherever xdg-app-paths points; take the newest candidate.
-fn vercel_auth_file() -> Option<PathBuf> {
-    let dirs = directories::BaseDirs::new()?;
-    let name = "com.vercel.cli";
-    let mut candidates = vec![
-        dirs.data_dir().join("xdg.data").join(name),
-        dirs.data_dir().join(name),
-        dirs.data_dir().join(name).join("Data"),
-        dirs.home_dir().join(".local").join("share").join(name),
-        dirs.home_dir().join(".now"),
-    ];
-    if let Some(xdg) = env("XDG_DATA_HOME") {
-        candidates.insert(0, PathBuf::from(xdg).join(name));
-    }
-    candidates
-        .into_iter()
-        .map(|d| d.join("auth.json"))
-        .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
-        .max_by_key(|(modified, _)| *modified)
-        .map(|(_, p)| p)
-}
-
-fn vercel_token() -> Result<(String, Option<i64>)> {
-    let path = vercel_auth_file().context("Vercel CLI is not signed in. Run `vercel login`.")?;
-    let v: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let token = v["token"]
-        .as_str()
-        .filter(|t| !t.is_empty())
-        .context("Vercel CLI is not signed in. Run `vercel login`.")?;
-    Ok((token.into(), v["expiresAt"].as_i64()))
-}
-fn supabase_file() -> Option<PathBuf> {
-    home().map(|h| h.join(".supabase").join("access-token"))
-}
-
-fn supabase_present() -> bool {
-    if supabase_file().is_some_and(|p| p.is_file()) {
-        return true;
-    }
-    // Reading the macOS/Linux keychain prompts the user, so only peek where it is silent.
-    if cfg!(windows) {
-        supabase_keyring().is_some()
-    } else {
-        home().is_some_and(|h| h.join(".supabase").is_dir())
-    }
-}
-
-fn supabase_token() -> Option<String> {
-    supabase_file()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-        .or_else(supabase_keyring)
-}
-
-fn supabase_keyring() -> Option<String> {
-    #[cfg(windows)]
-    let entry =
-        keyring::Entry::new_with_target("Supabase CLI:supabase", "Supabase CLI", "supabase");
-    #[cfg(not(windows))]
-    let entry = keyring::Entry::new("Supabase CLI", "supabase");
-    decode_go_keyring(&entry.ok()?.get_secret().ok()?)
-}
-
 /// The Supabase CLI stores its token with go-keyring: UTF-8 bytes, sometimes prefixed and encoded.
-fn decode_go_keyring(bytes: &[u8]) -> Option<String> {
+pub fn decode_go_keyring(bytes: &[u8]) -> Option<String> {
     let utf16 = bytes.len() >= 2
         && bytes.len().is_multiple_of(2)
         && bytes.iter().skip(1).step_by(2).all(|b| *b == 0);
@@ -489,5 +649,84 @@ mod tests {
             .flat_map(u16::to_le_bytes)
             .collect();
         assert_eq!(decode_go_keyring(&utf16).as_deref(), Some("sbp_abc"));
+    }
+    fn manifest(sources: serde_json::Value) -> Manifest {
+        serde_json::from_value(serde_json::json!({
+            "id": "test.acme", "name": "Acme", "publisher": "t", "version": "1", "description": "",
+            "homepage": "https://acme.dev", "kind": "declarative", "hosts": ["api.acme.dev"],
+            "credential_fields": [{"key": "token", "label": "API key", "env": "ACME_API_KEY"}],
+            "sources": sources,
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn evaluates_manifest_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().display().to_string();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            r#"{"auth":{"key":"acme_json"},"exp":1}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("creds.ini"),
+            "[default]\napi_key = acme_ini\n",
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("profiles")).unwrap();
+        std::fs::write(
+            dir.path().join("profiles").join("work.key"),
+            "  acme_text\n",
+        )
+        .unwrap();
+        // SAFETY: the variable names are unique to this test.
+        unsafe {
+            std::env::set_var("GETKEYS_TEST_ROOT", &root);
+            std::env::set_var("GETKEYS_TEST_ACME_KEY", "acme_env");
+        }
+        let m = manifest(serde_json::json!([
+            {"kind": "env", "var": "GETKEYS_TEST_ACME_KEY", "role": "key"},
+            {"id": "acme_ini", "label": "Acme CLI", "kind": "file", "role": "key",
+             "paths": ["{env:GETKEYS_TEST_ROOT}/creds.ini"], "format": "ini", "pointer": "default.api_key"},
+            {"id": "acme_text", "label": "Acme profiles", "kind": "file", "role": "key",
+             "paths": ["{env:GETKEYS_TEST_ROOT}/profiles/*.key"]},
+            {"id": "acme_json", "label": "Acme session", "kind": "file",
+             "paths": ["{env:GETKEYS_TEST_ROOT}/missing.json", "{env:GETKEYS_TEST_ROOT}/auth.json"],
+             "format": "json", "pointer": "/auth/key", "expires_pointer": "/exp"},
+            {"id": "acme_absent", "kind": "env", "var": "GETKEYS_TEST_UNSET"}
+        ]));
+        let ms = [m];
+        let found = scan(&ms);
+        let ids: Vec<&str> = found.iter().map(|d| d.id.as_str()).collect();
+        // The JSON session expired long ago and has no renew command, so it isn't offered.
+        assert_eq!(ids, ["env:GETKEYS_TEST_ACME_KEY", "acme_ini", "acme_text"]);
+        assert!(found.iter().all(|d| d.key));
+        let key = |id: &str| match load(&ms, id).unwrap().1 {
+            Found::Key(v) => v.fields["token"].clone(),
+            _ => panic!("expected a key"),
+        };
+        assert_eq!(key("env:GETKEYS_TEST_ACME_KEY"), "acme_env");
+        assert_eq!(key("acme_ini"), "acme_ini");
+        assert_eq!(key("acme_text"), "acme_text");
+        assert!(load(&ms, "acme_json").is_err_and(|e| e.to_string().contains("expired")));
+        assert_eq!(sign_in_name(&ms, Some("acme_ini")), "Acme CLI");
+        assert_eq!(
+            sign_in_name(&ms, Some("env:GETKEYS_TEST_ACME_KEY")),
+            "$GETKEYS_TEST_ACME_KEY"
+        );
+    }
+    #[test]
+    fn sources_sharing_a_label_act_as_one() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("b.txt"), "second").unwrap();
+        // SAFETY: the variable name is unique to this test.
+        unsafe { std::env::set_var("GETKEYS_TEST_SHARED", dir.path()) };
+        let ms = [manifest(serde_json::json!([
+            {"id": "first", "label": "Acme CLI", "kind": "file", "paths": ["{env:GETKEYS_TEST_SHARED}/a.txt"]},
+            {"id": "second", "label": "Acme CLI", "kind": "file", "paths": ["{env:GETKEYS_TEST_SHARED}/b.txt"]}
+        ]))];
+        assert_eq!(scan(&ms).len(), 1);
+        // A sign-in saved from the first place still loads after the CLI moved its token.
+        assert!(matches!(load(&ms, "first").unwrap().1, Found::Material(_)));
     }
 }

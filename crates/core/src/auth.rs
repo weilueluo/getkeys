@@ -101,6 +101,7 @@ pub fn browser_ready(method: &AuthMethod) -> bool {
             .is_some_and(|v| !v.trim().is_empty()),
         AuthMethod::Broker { .. } => broker_url().is_ok(),
         AuthMethod::AwsSso => true,
+        AuthMethod::Token => false,
     }
 }
 pub fn expiring(auth: &AuthMaterial) -> bool {
@@ -140,6 +141,7 @@ pub fn begin(
     let id = existing_id.map(str::to_owned).unwrap_or(new_id()?);
     let http = client()?;
     let (state, url, user_code, expires, interval) = match &m.auth {
+        AuthMethod::Token => bail!("Paste a key to connect {}", m.name),
         AuthMethod::Device {
             device_url,
             token_url,

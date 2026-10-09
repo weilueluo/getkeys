@@ -1,9 +1,63 @@
 {
-  "id": "official.vercel", "name": "Vercel", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
-  "description": "Keep account tokens and deliver secrets to your deployments.", "homepage": "https://vercel.com",
-  "hosts": ["api.vercel.com", "vercel.com"], "auth": { "kind": "broker", "registration": "vercel" },
-  "operations": ["identity", "list_resources", "list_credentials", "create_credential", "validate_credential", "revoke_credential", "write_secret", "guide"], "fields": [],
-  "credential_fields": [{"key":"token","label":"Access token","placeholder":"Paste the token value","required":true,"env":"VERCEL_TOKEN"}],
-  "account_fields": [{"key":"token","label":"Access token","placeholder":"Paste the token","required":true,"env":"VERCEL_TOKEN"}],
-  "token_page": "https://vercel.com/account/settings/tokens", "account_credentials": true
+  "id": "official.vercel",
+  "name": "Vercel",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep account tokens and deliver secrets to your deployments.",
+  "homepage": "https://vercel.com",
+  "category": "cloud",
+  "hosts": ["api.vercel.com", "vercel.com"],
+  "auth": { "kind": "broker", "registration": "vercel" },
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "create_credential",
+    "validate_credential",
+    "revoke_credential",
+    "write_secret",
+    "guide"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "Access token",
+      "placeholder": "Paste the token value",
+      "required": true,
+      "env": "VERCEL_TOKEN"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Access token",
+      "placeholder": "Paste the token",
+      "required": true,
+      "env": "VERCEL_TOKEN"
+    }
+  ],
+  "token_page": "https://vercel.com/account/settings/tokens",
+  "account_credentials": true,
+  "validate": { "url": "https://api.vercel.com/v2/user" },
+  "sources": [
+    {
+      "id": "vercel",
+      "label": "Vercel CLI",
+      "kind": "file",
+      "paths": [
+        "{env:XDG_DATA_HOME}/com.vercel.cli/auth.json",
+        "{data}/xdg.data/com.vercel.cli/auth.json",
+        "{data}/com.vercel.cli/auth.json",
+        "{data}/com.vercel.cli/Data/auth.json",
+        "~/.local/share/com.vercel.cli/auth.json",
+        "~/.now/auth.json"
+      ],
+      "format": "json",
+      "pointer": "/token",
+      "expires_pointer": "/expiresAt",
+      "renew": ["vercel", "whoami"]
+    },
+    { "kind": "env", "var": "VERCEL_TOKEN" }
+  ]
 }

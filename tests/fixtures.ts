@@ -49,6 +49,7 @@ export function connectedSnapshot(): Snapshot {
   snapshot.credentials = [
     {
       id: 'credential',
+      plugin_id: '',
       connection_id: 'connection',
       provider_id: 'key_123',
       name: 'Production API',
@@ -85,6 +86,7 @@ export function connectedSnapshot(): Snapshot {
     },
     {
       id: 'signin-connection',
+      plugin_id: '',
       connection_id: 'connection',
       provider_id: 'sign-in',
       name: 'Supabase CLI',

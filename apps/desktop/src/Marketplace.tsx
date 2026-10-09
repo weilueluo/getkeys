@@ -47,11 +47,14 @@ export function Marketplace({
   const [removing, setRemoving] = useState<PluginView>();
   const accountsOf = (p: PluginView) =>
     snapshot.connections.filter((c) => c.plugin_id === p.manifest.id && c.state !== 'disconnected');
-  const added = (p: PluginView) => accountsOf(p).length > 0;
+  const declarative = (p: PluginView) => p.manifest.kind === 'declarative';
+  const added = (p: PluginView) => (declarative(p) ? p.installed : accountsOf(p).length > 0);
   const plugins = snapshot.plugins.filter(
     (p) =>
       (filter === 'all' || added(p)) &&
-      `${p.manifest.name} ${p.manifest.description}`.toLowerCase().includes(search.toLowerCase()),
+      `${p.manifest.name} ${p.manifest.description} ${p.manifest.category}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
   );
   const toggle = (id: string) =>
     setOpen((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]));
@@ -75,7 +78,11 @@ export function Marketplace({
       <div className="provider-list">
         {plugins.map((p) => {
           const accounts = accountsOf(p);
-          const expanded = accounts.length > 0 && open.includes(p.manifest.id);
+          const expandable = accounts.length > 0 || (declarative(p) && p.installed);
+          const expanded = expandable && open.includes(p.manifest.id);
+          const keyCount = snapshot.credentials.filter(
+            (k) => k.plugin_id === p.manifest.id && !k.connection_id && !k.retired,
+          ).length;
           const local = found.filter((d) => d.plugin_id === p.manifest.id);
           return (
             <article className={`provider-card ${expanded ? 'open' : ''}`} key={p.manifest.id}>
@@ -84,9 +91,17 @@ export function Marketplace({
                 <div className="provider-body">
                   <div className="provider-title">
                     <h2>{p.manifest.name}</h2>
+                    {p.manifest.category && (
+                      <span className="badge subtle">{humanize(p.manifest.category)}</span>
+                    )}
                     {accounts.length > 0 && (
                       <span className="badge">
                         {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
+                      </span>
+                    )}
+                    {declarative(p) && p.installed && (
+                      <span className="badge">
+                        {keyCount} {keyCount === 1 ? 'key' : 'keys'}
                       </span>
                     )}
                     {p.update_available && <span className="badge warning">Update</span>}
@@ -114,12 +129,12 @@ export function Marketplace({
                       <ExternalLink size={14} strokeWidth={1.75} /> Open
                     </button>
                   )}
-                  {accounts.length ? (
+                  {expandable ? (
                     <button
                       className="icon-button outline provider-toggle"
                       aria-expanded={expanded}
-                      aria-label={`${p.manifest.name} accounts`}
-                      title={expanded ? 'Hide accounts' : 'Show accounts'}
+                      aria-label={`${p.manifest.name} ${declarative(p) ? 'details' : 'accounts'}`}
+                      title={expanded ? 'Hide' : 'Show'}
                       onClick={() => toggle(p.manifest.id)}
                     >
                       <ChevronDown size={16} strokeWidth={1.75} />
@@ -141,6 +156,12 @@ export function Marketplace({
                   role="region"
                   aria-label={`${p.manifest.name} accounts`}
                 >
+                  {declarative(p) && (
+                    <p className="provider-note">
+                      {p.manifest.name} keys need no account. GetKeys picks them up from this device
+                      on Refresh, and New key adds one by hand.
+                    </p>
+                  )}
                   <ul className="account-list">
                     {accounts.map((c) => (
                       <Account
@@ -153,13 +174,15 @@ export function Marketplace({
                     ))}
                   </ul>
                   <div className="provider-footer">
-                    <button
-                      disabled={busy}
-                      className="button outline small"
-                      onClick={() => connect(p)}
-                    >
-                      <Plus size={13} /> Add account
-                    </button>
+                    {!declarative(p) && (
+                      <button
+                        disabled={busy}
+                        className="button outline small"
+                        onClick={() => connect(p)}
+                      >
+                        <Plus size={13} /> Add account
+                      </button>
+                    )}
                     {p.update_available && (
                       <button
                         disabled={busy}
@@ -192,7 +215,10 @@ export function Marketplace({
                         <dt>Hosts</dt>
                         <dd className="mono">{p.manifest.hosts.join('  ')}</dd>
                         <dt>Operations</dt>
-                        <dd>{p.manifest.operations.map(humanize).join(', ')}</dd>
+                        <dd>
+                          {p.manifest.operations.map(humanize).join(', ') ||
+                            'None, it only checks keys'}
+                        </dd>
                         <dt>Publisher</dt>
                         <dd>
                           {p.manifest.publisher} ·{' '}
@@ -243,14 +269,18 @@ function RemoveProvider({
   const { name, id } = plugin.manifest;
   const ids = new Set(accounts.map((a) => a.id));
   const keys = snapshot.credentials.filter(
-    (k) => ids.has(k.connection_id) && !k.retired && k.credential_type !== SIGN_IN,
+    (k) =>
+      (ids.has(k.connection_id) || (!k.connection_id && k.plugin_id === id)) &&
+      !k.retired &&
+      k.credential_type !== SIGN_IN,
   ).length;
   const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return (
     <Modal title={`Remove ${name}?`} onClose={close}>
       <p>
-        GetKeys forgets {count(accounts.length, 'account')} and {count(keys, 'key')} from {name}.
-        Nothing is deleted at {name}, except the management keys GetKeys created for itself.
+        GetKeys forgets {accounts.length ? `${count(accounts.length, 'account')} and ` : ''}
+        {count(keys, 'key')} from {name}. Nothing is deleted at {name}, except the management keys
+        GetKeys created for itself.
       </p>
       <div className="modal-footer">
         <button className="button outline" onClick={close}>

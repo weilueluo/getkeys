@@ -41,10 +41,12 @@ fn main() -> Result<()> {
                 &fs::read_to_string("registry/public-key.hex")?,
             )?;
             for p in catalog.packages {
-                getkeys_core::plugins::verify_artifact(
-                    &p,
-                    &fs::read(Path::new("registry/dist").join(&p.wasm))?,
-                )?;
+                let bytes = if p.declarative() {
+                    getkeys_core::plugins::manifest_bytes(&p.manifest)
+                } else {
+                    fs::read(Path::new("registry/dist").join(&p.wasm))?
+                };
+                getkeys_core::plugins::verify_artifact(&p, &bytes)?;
             }
             println!("Marketplace signature and all plugin artifacts verified.");
         }
@@ -81,23 +83,42 @@ fn package() -> Result<()> {
             .and_then(|s| s.to_str())
             .context("Invalid provider directory")?;
         let manifest: Manifest =
-            serde_json::from_slice(&fs::read(format!("plugins/{id}/manifest.json"))?)?;
-        let bytes = fs::read(format!(
-            "target/wasm32-unknown-unknown/release/getkeys_plugin_{id}.wasm"
-        ))?;
-        let sha256 = hex::encode(Sha256::digest(&bytes));
-        let wasm = format!("{}-{}.wasm", manifest.id, manifest.version);
-        fs::write(Path::new("registry/dist").join(&wasm), bytes)?;
+            serde_json::from_slice(&fs::read(format!("plugins/{id}/manifest.json"))?)
+                .with_context(|| format!("plugins/{id}/manifest.json"))?;
+        getkeys_core::plugins::validate_manifest(&manifest)
+            .with_context(|| format!("plugins/{id}/manifest.json"))?;
+        let declarative = manifest.kind == ProviderKind::Declarative;
+        ensure!(
+            declarative != provider.join("Cargo.toml").exists(),
+            "plugins/{id}: declarative providers have only a manifest; managed ones have code"
+        );
+        let (wasm, sha256) = if declarative {
+            let bytes = getkeys_core::plugins::manifest_bytes(&manifest);
+            (String::new(), hex::encode(Sha256::digest(&bytes)))
+        } else {
+            let bytes = fs::read(format!(
+                "target/wasm32-unknown-unknown/release/getkeys_plugin_{}.wasm",
+                id.replace('-', "_")
+            ))?;
+            let wasm = format!("{}-{}.wasm", manifest.id, manifest.version);
+            fs::write(Path::new("registry/dist").join(&wasm), &bytes)?;
+            (wasm, hex::encode(Sha256::digest(&bytes)))
+        };
         packages.push(Package {
             manifest,
             wasm,
             sha256,
         });
     }
-    let bytes = serde_json::to_vec_pretty(&Catalog {
-        version: 1,
-        packages,
-    })?;
+    // Drop artifacts of providers that were removed or bumped.
+    for entry in fs::read_dir("registry/dist")? {
+        let path = entry?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.ends_with(".wasm") && !packages.iter().any(|p| p.wasm == name) {
+            fs::remove_file(path)?;
+        }
+    }
+    let bytes = serde_json::to_vec_pretty(&Catalog { packages })?;
     fs::write(
         "registry/dist/index.sig",
         STANDARD.encode(key.sign(&bytes).to_bytes()),
@@ -110,7 +131,13 @@ fn types() -> Result<()> {
     let cfg = ts_rs::Config::default().with_large_int("number");
     let declarations = [
         Manifest::decl(&cfg),
+        ProviderKind::decl(&cfg),
         AuthMethod::decl(&cfg),
+        Validate::decl(&cfg),
+        Source::decl(&cfg),
+        SourceRole::decl(&cfg),
+        SourceKind::decl(&cfg),
+        FileFormat::decl(&cfg),
         ConfigField::decl(&cfg),
         OperationKind::decl(&cfg),
         Resource::decl(&cfg),

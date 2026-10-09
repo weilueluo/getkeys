@@ -134,6 +134,15 @@ pub enum Command {
         name: String,
         fields: Vec<CustomField>,
     },
+    SaveKey {
+        credential_id: Option<String>,
+        plugin_id: String,
+        name: String,
+        fields: BTreeMap<String, String>,
+    },
+    RotateNow {
+        credential_id: String,
+    },
     OpenVaultFolder,
     Restore {
         path: String,
@@ -269,6 +278,13 @@ impl App {
                 name,
                 fields,
             } => to_value(self.save_custom(credential_id.as_deref(), &name, fields)?)?,
+            Command::SaveKey {
+                credential_id,
+                plugin_id,
+                name,
+                fields,
+            } => to_value(self.save_key(credential_id.as_deref(), &plugin_id, &name, fields)?)?,
+            Command::RotateNow { credential_id } => to_value(self.rotate_now(&credential_id)?)?,
             Command::OpenVaultFolder => {
                 let folder = self
                     .vault

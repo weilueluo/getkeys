@@ -1,13 +1,62 @@
 {
-  "id": "official.supabase", "name": "Supabase", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
-  "description": "Find project keys and rotate server credentials.", "homepage": "https://supabase.com",
+  "id": "official.supabase",
+  "name": "Supabase",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Find project keys and rotate server credentials.",
+  "homepage": "https://supabase.com",
+  "category": "database",
   "hosts": ["api.supabase.com", "*.supabase.co"],
   "auth": { "kind": "broker", "registration": "supabase" },
-  "operations": ["identity", "list_resources", "list_credentials", "read_credential", "create_credential", "validate_credential", "revoke_credential"], "fields": [],
-  "credential_fields": [
-    {"key":"token","label":"API key","placeholder":"sb_secret_…","required":true,"env":"SUPABASE_KEY"},
-    {"key":"url","label":"Project URL","secret":false,"env":"SUPABASE_URL"}
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "read_credential",
+    "create_credential",
+    "validate_credential",
+    "revoke_credential"
   ],
-  "account_fields": [{"key":"token","label":"Access token","placeholder":"sbp_…","required":true,"env":"SUPABASE_ACCESS_TOKEN"}],
-  "token_page": "https://supabase.com/dashboard/account/tokens"
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "sb_secret_…",
+      "required": true,
+      "env": "SUPABASE_KEY"
+    },
+    { "key": "url", "label": "Project URL", "secret": false, "env": "SUPABASE_URL" }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Access token",
+      "placeholder": "sbp_…",
+      "required": true,
+      "env": "SUPABASE_ACCESS_TOKEN"
+    }
+  ],
+  "token_page": "https://supabase.com/dashboard/account/tokens",
+  "key_pattern": "^(sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,})$",
+  "sources": [
+    {
+      "id": "supabase",
+      "label": "Supabase CLI",
+      "kind": "file",
+      "paths": ["~/.supabase/access-token"]
+    },
+    {
+      "id": "supabase_keyring",
+      "label": "Supabase CLI",
+      "kind": "keyring",
+      "service": "Supabase CLI",
+      "user": "supabase",
+      "target": "Supabase CLI:supabase",
+      "go_keyring": true,
+      "hint": "~/.supabase"
+    },
+    { "kind": "env", "var": "SUPABASE_ACCESS_TOKEN" },
+    { "kind": "env", "var": "SUPABASE_TOKEN" }
+  ]
 }

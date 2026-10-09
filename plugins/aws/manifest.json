@@ -1,23 +1,91 @@
 {
-  "id": "official.aws", "name": "AWS", "publisher": "getkeys", "version": "0.1.0", "api_version": 1,
-  "description": "Sign in with IAM Identity Center and manage IAM access keys.", "homepage": "https://aws.amazon.com",
-  "hosts": ["iam.amazonaws.com", "sts.amazonaws.com"], "auth": { "kind": "aws_sso" },
-  "operations": ["identity", "list_resources", "list_credentials", "create_credential", "validate_credential", "deactivate_credential", "revoke_credential"],
+  "id": "official.aws",
+  "name": "AWS",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Sign in with IAM Identity Center and manage IAM access keys.",
+  "homepage": "https://aws.amazon.com",
+  "category": "cloud",
+  "hosts": ["iam.amazonaws.com", "sts.amazonaws.com"],
+  "auth": { "kind": "aws_sso" },
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "create_credential",
+    "validate_credential",
+    "deactivate_credential",
+    "revoke_credential"
+  ],
   "fields": [
-    {"key":"start_url","label":"IAM Identity Center start URL","placeholder":"https://your-company.awsapps.com/start","required":true,"secret":false},
-    {"key":"region","label":"SSO region","placeholder":"eu-west-2","required":true,"secret":false}
+    {
+      "key": "start_url",
+      "label": "IAM Identity Center start URL",
+      "placeholder": "https://your-company.awsapps.com/start",
+      "required": true,
+      "secret": false
+    },
+    {
+      "key": "region",
+      "label": "SSO region",
+      "placeholder": "eu-west-2",
+      "required": true,
+      "secret": false
+    }
   ],
   "credential_fields": [
-    {"key":"access_key_id","label":"Access key ID","placeholder":"AKIA…","required":true,"secret":false,"env":"AWS_ACCESS_KEY_ID"},
-    {"key":"secret_access_key","label":"Secret access key","placeholder":"Paste the secret value","required":true,"env":"AWS_SECRET_ACCESS_KEY"},
-    {"key":"session_token","label":"Session token","placeholder":"Only for temporary credentials","env":"AWS_SESSION_TOKEN"}
+    {
+      "key": "access_key_id",
+      "label": "Access key ID",
+      "placeholder": "AKIA…",
+      "required": true,
+      "secret": false,
+      "env": "AWS_ACCESS_KEY_ID"
+    },
+    {
+      "key": "secret_access_key",
+      "label": "Secret access key",
+      "placeholder": "Paste the secret value",
+      "required": true,
+      "env": "AWS_SECRET_ACCESS_KEY"
+    },
+    {
+      "key": "session_token",
+      "label": "Session token",
+      "placeholder": "Only for temporary credentials",
+      "env": "AWS_SESSION_TOKEN"
+    }
   ],
   "account_fields": [
-    {"key":"access_key_id","label":"Access key ID","placeholder":"AKIA…","required":true,"secret":false,"env":"AWS_ACCESS_KEY_ID"},
-    {"key":"secret_access_key","label":"Secret access key","placeholder":"Paste the secret","required":true,"env":"AWS_SECRET_ACCESS_KEY"},
-    {"key":"session_token","label":"Session token","placeholder":"Only for temporary credentials","env":"AWS_SESSION_TOKEN"},
-    {"key":"region","label":"Region","secret":false,"env":"AWS_REGION"},
-    {"key":"account_id","label":"Account ID","secret":false}
+    {
+      "key": "access_key_id",
+      "label": "Access key ID",
+      "placeholder": "AKIA…",
+      "required": true,
+      "secret": false,
+      "env": "AWS_ACCESS_KEY_ID"
+    },
+    {
+      "key": "secret_access_key",
+      "label": "Secret access key",
+      "placeholder": "Paste the secret",
+      "required": true,
+      "env": "AWS_SECRET_ACCESS_KEY"
+    },
+    {
+      "key": "session_token",
+      "label": "Session token",
+      "placeholder": "Only for temporary credentials",
+      "env": "AWS_SESSION_TOKEN"
+    },
+    { "key": "region", "label": "Region", "secret": false, "env": "AWS_REGION" },
+    { "key": "account_id", "label": "Account ID", "secret": false }
   ],
-  "token_page": "https://console.aws.amazon.com/iam/home#/security_credentials"
+  "token_page": "https://console.aws.amazon.com/iam/home#/security_credentials",
+  "key_pattern": "^(AKIA|ASIA)[A-Z0-9]{16}$",
+  "sources": [
+    { "kind": "aws_env", "label": "Environment" },
+    { "kind": "aws_sso", "label": "IAM Identity Center" },
+    { "kind": "aws_profiles", "label": "AWS CLI profile" }
+  ]
 }

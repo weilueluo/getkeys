@@ -238,6 +238,37 @@ pub fn auth_from_secret(value: &SecretValue) -> Result<AuthMaterial> {
     })
 }
 
+/// Asks the provider whether a key works using its manifest's `validate` request. `None` when
+/// the provider declares no check; `Some(false)` when the provider rejects the key.
+pub fn probe(m: &Manifest, value: &SecretValue) -> Result<Option<bool>> {
+    let Some(v) = &m.validate else {
+        return Ok(None);
+    };
+    let key = value
+        .fields
+        .get(&v.field)
+        .or_else(|| value.fields.values().next())
+        .context("The key has no value to check")?;
+    let url = validate_url(&v.url, &m.hosts)?;
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("GetKeys")
+        .build()?;
+    let mut request = client
+        .get(url)
+        .header(v.header.as_str(), format!("{}{key}", v.prefix));
+    for (name, value) in &v.headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+    let status = request
+        .send()
+        .with_context(|| format!("{} could not be reached", m.name))?
+        .status()
+        .as_u16();
+    Ok(Some(!matches!(status, 401 | 403)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

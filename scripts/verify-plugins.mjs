@@ -1,35 +1,38 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { compilePlugins } from './compile-plugins.mjs';
 
-// Fill the serde defaults of ConfigField so a terse source manifest equals the signed one.
-const field = (f) => ({ placeholder: '', required: false, secret: true, env: '', ...f });
-const normalize = (m) => ({
-  ...m,
-  fields: m.fields.map(field),
-  credential_fields: m.credential_fields.map(field),
-  account_fields: (m.account_fields ?? []).map(field),
-  token_page: m.token_page ?? '',
-  account_credentials: m.account_credentials ?? false,
-});
-const names = compilePlugins();
+const compiled = new Set(compilePlugins());
 const catalog = JSON.parse(readFileSync('registry/dist/index.json', 'utf8'));
-for (const name of names) {
-  const manifest = normalize(JSON.parse(readFileSync(`plugins/${name}/manifest.json`, 'utf8')));
-  const packageInfo = catalog.packages.find((p) => p.manifest.id === manifest.id);
-  const bytes = readFileSync(
-    `target/wasm32-unknown-unknown/release/getkeys_plugin_${name.replaceAll('-', '_')}.wasm`,
+const names = readdirSync('plugins', { withFileTypes: true })
+  .filter((p) => p.isDirectory())
+  .map((p) => p.name);
+const stale = (id) =>
+  new Error(`Signed bundle is stale for ${id}. Rebuild and sign with npm run plugins:build.`);
+// Serde fills defaults, so compare the source manifest with the signed one field by field.
+const same = (source, signed) =>
+  Object.entries(source).every(([key, value]) =>
+    Array.isArray(value)
+      ? Array.isArray(signed[key]) &&
+        value.length === signed[key].length &&
+        value.every((v, i) =>
+          v && typeof v === 'object' ? same(v, signed[key][i]) : isDeepStrictEqual(v, signed[key][i]),
+        )
+      : value && typeof value === 'object'
+        ? same(value, signed[key] ?? {})
+        : isDeepStrictEqual(value, signed[key]),
   );
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  if (
-    !packageInfo ||
-    packageInfo.sha256 !== digest ||
-    !isDeepStrictEqual(normalize(packageInfo.manifest), manifest)
-  ) {
-    throw new Error(
-      `Signed bundle is stale for ${manifest.id}. Rebuild and sign with npm run plugins:build.`,
+for (const name of names) {
+  const manifest = JSON.parse(readFileSync(`plugins/${name}/manifest.json`, 'utf8'));
+  const signed = catalog.packages.find((p) => p.manifest.id === manifest.id);
+  if (!signed || !same(manifest, signed.manifest)) throw stale(manifest.id);
+  if (compiled.has(name)) {
+    const bytes = readFileSync(
+      `target/wasm32-unknown-unknown/release/getkeys_plugin_${name.replaceAll('-', '_')}.wasm`,
     );
+    if (createHash('sha256').update(bytes).digest('hex') !== signed.sha256) throw stale(manifest.id);
   }
 }
+if (catalog.packages.length !== names.length) throw new Error('The signed catalog lists removed providers.');
 console.log('Signed provider bundles match the source build.');

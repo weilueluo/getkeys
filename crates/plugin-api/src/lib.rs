@@ -3,8 +3,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
-pub const API_VERSION: u32 = 1;
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -12,12 +10,21 @@ pub struct Manifest {
     pub name: String,
     pub publisher: String,
     pub version: String,
-    pub api_version: u32,
     pub description: String,
     pub homepage: String,
+    /// Managed providers ship code that lists and manages keys remotely; declarative ones are
+    /// just this manifest: where their keys live on a device and how to check one.
+    #[serde(default)]
+    pub kind: ProviderKind,
+    /// Groups providers in Add provider, such as `ai`, `cloud`, `database` or `devtools`.
+    #[serde(default)]
+    pub category: String,
     pub hosts: Vec<String>,
+    #[serde(default)]
     pub auth: AuthMethod,
+    #[serde(default)]
     pub operations: Vec<OperationKind>,
+    #[serde(default)]
     pub fields: Vec<ConfigField>,
     /// Fields of keys listed under a resource, in display order.
     pub credential_fields: Vec<ConfigField>,
@@ -31,11 +38,32 @@ pub struct Manifest {
     /// A token the plugin lists with credential type `sign_in` is the one the connection uses.
     #[serde(default)]
     pub account_credentials: bool,
+    /// Regular expression the key's first secret field matches, used to recognise pasted keys
+    /// and keys found in `.env` files.
+    #[serde(default)]
+    pub key_pattern: String,
+    /// How to ask the provider whether one of its keys still works.
+    #[serde(default)]
+    pub validate: Option<Validate>,
+    /// Where this provider's keys and sign-ins live on a device.
+    #[serde(default)]
+    pub sources: Vec<Source>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    #[default]
+    Managed,
+    Declarative,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AuthMethod {
+    /// Connect by pasting a management key or token.
+    #[default]
+    Token,
     Device {
         device_url: String,
         token_url: String,
@@ -46,6 +74,120 @@ pub enum AuthMethod {
         registration: String,
     },
     AwsSso,
+}
+
+/// A request that succeeds only with a working key. 401 and 403 mean the key is rejected.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[serde(deny_unknown_fields)]
+pub struct Validate {
+    pub url: String,
+    /// Header carrying the key.
+    #[serde(default = "authorization")]
+    pub header: String,
+    /// Put before the key in the header.
+    #[serde(default = "bearer")]
+    pub prefix: String,
+    /// Key field sent.
+    #[serde(default = "token")]
+    pub field: String,
+    /// Other fixed headers, such as an API version.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+fn authorization() -> String {
+    "Authorization".into()
+}
+fn bearer() -> String {
+    "Bearer ".into()
+}
+fn token() -> String {
+    "token".into()
+}
+
+/// A place on this device that may hold a key or a sign-in.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+pub struct Source {
+    /// Stable ID, unique across providers. Environment variables use `env:NAME`.
+    #[serde(default)]
+    pub id: String,
+    /// Where it was found, such as "Hugging Face CLI".
+    #[serde(default)]
+    pub label: String,
+    /// Whether it signs an account in, or is a key to list on its own.
+    #[serde(default)]
+    pub role: SourceRole,
+    /// Key field the found value fills.
+    #[serde(default = "token")]
+    pub field: String,
+    #[serde(flatten)]
+    pub from: SourceKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceRole {
+    #[default]
+    Account,
+    Key,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceKind {
+    /// An environment variable.
+    Env { var: String },
+    /// The newest existing file of `paths`. Paths may start with `~`, `{config}`, `{data}`,
+    /// `{local_data}` or `{env:NAME}`. Text files hold the value; JSON, TOML and INI files
+    /// hold it at `pointer` (a JSON pointer, or `section.key` for INI).
+    File {
+        paths: Vec<String>,
+        #[serde(default)]
+        format: FileFormat,
+        #[serde(default)]
+        pointer: String,
+        /// Pointer to an expiry, in seconds or milliseconds since the epoch.
+        #[serde(default)]
+        expires_pointer: String,
+        /// Command that renews an expiring session before reading again.
+        #[serde(default)]
+        renew: Vec<String>,
+    },
+    /// A command's standard output, run without a shell.
+    Command { argv: Vec<String> },
+    /// An OS credential store entry.
+    Keyring {
+        service: String,
+        user: String,
+        /// Windows credential target name, when it differs.
+        #[serde(default)]
+        target: String,
+        /// The value is stored by go-keyring.
+        #[serde(default)]
+        go_keyring: bool,
+        /// File or folder that hints the entry exists, so other systems aren't asked to unlock
+        /// their keychain while scanning.
+        #[serde(default)]
+        hint: String,
+    },
+    /// Every account signed in to the GitHub CLI.
+    GhCli,
+    /// `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+    AwsEnv,
+    /// Access key profiles in the AWS shared credentials file.
+    AwsProfiles,
+    /// IAM Identity Center profiles in the AWS config file.
+    AwsSso,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum FileFormat {
+    #[default]
+    Text,
+    Json,
+    Toml,
+    Ini,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
@@ -79,6 +221,8 @@ pub enum OperationKind {
     ValidateCredential,
     DeactivateCredential,
     RevokeCredential,
+    /// Replaces a key's secret in place; the old value stops working.
+    RotateCredential,
     WriteSecret,
     Guide,
 }
@@ -110,6 +254,10 @@ pub enum Operation {
         resource: String,
         credential: String,
     },
+    RotateCredential {
+        resource: String,
+        credential: String,
+    },
     WriteSecret {
         resource: String,
         name: String,
@@ -131,6 +279,7 @@ impl Operation {
             Self::ValidateCredential { .. } => OperationKind::ValidateCredential,
             Self::DeactivateCredential { .. } => OperationKind::DeactivateCredential,
             Self::RevokeCredential { .. } => OperationKind::RevokeCredential,
+            Self::RotateCredential { .. } => OperationKind::RotateCredential,
             Self::WriteSecret { .. } => OperationKind::WriteSecret,
             Self::Guide { .. } => OperationKind::Guide,
         }
@@ -141,6 +290,7 @@ impl Operation {
             Self::CreateCredential { .. }
                 | Self::DeactivateCredential { .. }
                 | Self::RevokeCredential { .. }
+                | Self::RotateCredential { .. }
                 | Self::WriteSecret { .. }
         )
     }

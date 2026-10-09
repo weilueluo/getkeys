@@ -87,7 +87,10 @@ impl App {
                 .list::<Credential>("credential")?
                 .into_iter()
                 .map(|c| {
-                    let fields = if c.view.connection_id.is_empty() {
+                    let fields = if !c.view.plugin_id.is_empty() {
+                        self.manifest(&c.view.plugin_id)
+                            .map_or_else(|_| custom_fields(&c), |m| key_fields(&m, &c))
+                    } else if c.view.connection_id.is_empty() {
                         custom_fields(&c)
                     } else {
                         manifests
@@ -112,6 +115,34 @@ impl App {
             activity,
             vault_path: self.vault.path().display().to_string(),
         })
+    }
+    /// Every provider's manifest, as installed when it is.
+    pub fn manifests(&self) -> Vec<Manifest> {
+        self.registry
+            .catalog
+            .packages
+            .iter()
+            .map(|p| {
+                self.registry
+                    .installed_package(&p.manifest.id)
+                    .ok()
+                    .flatten()
+                    .map_or_else(|| p.manifest.clone(), |i| i.manifest)
+            })
+            .collect()
+    }
+    fn installed_ids(&self) -> Vec<String> {
+        self.registry
+            .catalog
+            .packages
+            .iter()
+            .map(|p| p.manifest.id.clone())
+            .filter(|id| {
+                self.registry
+                    .installed_package(id)
+                    .is_ok_and(|p| p.is_some())
+            })
+            .collect()
     }
     pub fn manifest(&self, id: &str) -> Result<Manifest> {
         Ok(self
@@ -142,9 +173,11 @@ impl App {
         }
         let tx = self.vault.write()?;
         for c in self.vault.list::<Credential>("credential")? {
-            if connections
-                .iter()
-                .any(|x| x.view.id == c.view.connection_id)
+            let own = c.view.connection_id.is_empty() && c.view.plugin_id == id;
+            if own
+                || connections
+                    .iter()
+                    .any(|x| x.view.id == c.view.connection_id)
             {
                 self.vault.remove("credential", &c.view.id)?;
             }
@@ -227,8 +260,9 @@ impl App {
     /// Sessions already on this device that can be connected in one click.
     pub fn discover(&self) -> Result<Vec<Discovery>> {
         let connections = self.vault.list::<Connection>("connection")?;
-        Ok(discover::scan()
+        Ok(discover::scan(&self.manifests())
             .into_iter()
+            .filter(|d| !d.key)
             .map(|mut d| {
                 d.connected = connections.iter().any(|c| {
                     c.view.state != ConnectionState::Disconnected
@@ -240,7 +274,7 @@ impl App {
             .collect())
     }
     pub fn connect_local(&self, source: &str, existing: Option<&str>) -> Result<AuthProgress> {
-        let (plugin_id, found) = discover::load(source)?;
+        let (plugin_id, found) = discover::load(&self.manifests(), source)?;
         self.ensure_installed(&plugin_id)?;
         let id = existing.map_or_else(new_id, |id| Ok(id.to_owned()))?;
         match found {
@@ -255,7 +289,213 @@ impl App {
             Found::Material(auth) => {
                 self.save_connection(&id, plugin_id, BTreeMap::new(), *auth, Some(source.into()))
             }
+            Found::Key(value) => Ok(AuthProgress::KeySaved {
+                credential: Box::new(self.save_found(&plugin_id, source, value)?),
+            }),
         }
+    }
+    /// Keeps a key found on this device on its own, under its provider.
+    fn save_found(
+        &self,
+        plugin_id: &str,
+        source: &str,
+        value: SecretValue,
+    ) -> Result<CredentialView> {
+        let id = format!("found:{source}");
+        let name = discover::sign_in_name(&self.manifests(), Some(source));
+        let previous = self.vault.get::<Credential>("credential", &id).ok();
+        ensure!(
+            previous.as_ref().is_none_or(|p| !p.view.retired),
+            "This key was deleted from GetKeys"
+        );
+        self.store_key(&id, plugin_id, &name, value, previous)
+    }
+    fn store_key(
+        &self,
+        id: &str,
+        plugin_id: &str,
+        name: &str,
+        value: SecretValue,
+        previous: Option<Credential>,
+    ) -> Result<CredentialView> {
+        let manifest = self.manifest(plugin_id)?;
+        let plain = |k: &str| {
+            manifest
+                .credential_fields
+                .iter()
+                .any(|f| f.key == k && !f.secret)
+        };
+        let (details, secrets): (BTreeMap<_, _>, BTreeMap<_, _>) =
+            value.fields.into_iter().partition(|(k, _)| plain(k));
+        ensure!(!secrets.is_empty(), "Enter the key's secret value");
+        let created = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .ok();
+        let c = Credential {
+            view: CredentialView {
+                id: id.into(),
+                connection_id: String::new(),
+                provider_id: "local".into(),
+                name: name.trim().into(),
+                credential_type: API_KEY.into(),
+                resource: String::new(),
+                project: String::new(),
+                environment: String::new(),
+                created_at: previous
+                    .as_ref()
+                    .map_or(created, |c| c.view.created_at.clone()),
+                expires_at: None,
+                value_available: true,
+                can_rotate: false,
+                retired: false,
+                fields: Vec::new(),
+                resource_name: String::new(),
+                groups: previous
+                    .as_ref()
+                    .map(|c| c.view.groups.clone())
+                    .unwrap_or_default(),
+                problem: None,
+                plugin_id: plugin_id.into(),
+            },
+            value: Some(SecretValue { fields: secrets }),
+            details,
+        };
+        self.vault.put("credential", id, &c)?;
+        self.vault.event(
+            if previous.is_some() {
+                "credential.updated"
+            } else {
+                "credential.added"
+            },
+            id,
+        )?;
+        Ok(c.view)
+    }
+    /// Saves a key typed or pasted by the person under a provider, or replaces the value of an
+    /// existing key after rotating it on the provider's page. Blank secret fields keep their
+    /// value; a key the provider rejects is not saved.
+    pub fn save_key(
+        &self,
+        id: Option<&str>,
+        plugin_id: &str,
+        name: &str,
+        fields: BTreeMap<String, String>,
+    ) -> Result<CredentialView> {
+        let mut fields: BTreeMap<String, String> = fields
+            .into_iter()
+            .map(|(k, v)| (k, v.trim().to_owned()))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        let previous = match id {
+            Some(id) => {
+                let c: Credential = self.vault.get("credential", id)?;
+                ensure!(
+                    c.view.credential_type != SIGN_IN && c.view.credential_type != CUSTOM,
+                    "Edit this key from its own form"
+                );
+                for (k, v) in c.value.iter().flat_map(|v| &v.fields).chain(&c.details) {
+                    fields.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+                Some(c)
+            }
+            None => None,
+        };
+        self.ensure_installed(plugin_id)?;
+        let manifest = self.manifest(plugin_id)?;
+        let name = if name.trim().is_empty() {
+            previous
+                .as_ref()
+                .map_or_else(|| format!("{} key", manifest.name), |c| c.view.name.clone())
+        } else {
+            name.trim().to_owned()
+        };
+        for f in manifest.credential_fields.iter().filter(|f| f.required) {
+            ensure!(fields.contains_key(&f.key), "Enter the {}", f.label);
+        }
+        let value = SecretValue { fields };
+        let rejected = || {
+            anyhow::anyhow!(
+                "{} rejected this key. Check it and try again.",
+                manifest.name
+            )
+        };
+        match &previous {
+            Some(c) if !c.view.connection_id.is_empty() => {
+                // A key listed under an account keeps its place; only its value changes.
+                let tx = self.vault.write()?;
+                let mut c: Credential = self.vault.get("credential", &c.view.id)?;
+                let (details, secrets): (BTreeMap<_, _>, BTreeMap<_, _>) = value
+                    .fields
+                    .into_iter()
+                    .partition(|(k, _)| c.details.contains_key(k));
+                c.value = Some(SecretValue { fields: secrets });
+                c.details = details;
+                c.view.name = name;
+                c.view.value_available = true;
+                c.view.problem = None;
+                self.vault.put("credential", &c.view.id, &c)?;
+                self.vault.event("credential.updated", &c.view.id)?;
+                tx.commit()?;
+                return Ok(c.view);
+            }
+            _ => {}
+        }
+        if crate::http::probe(&manifest, &value).ok().flatten() == Some(false) {
+            return Err(rejected());
+        }
+        let tx = self.vault.write()?;
+        let id = match &previous {
+            // The place it was found still holds the old value, so the new one is kept apart
+            // and the old place no longer brings the key back.
+            Some(c) if c.view.id.starts_with("found:") => {
+                crate::rotation::mark_retired(&self.vault, c)?;
+                new_id()?
+            }
+            Some(c) => c.view.id.clone(),
+            None => new_id()?,
+        };
+        let view = self.store_key(&id, plugin_id, &name, value, previous)?;
+        tx.commit()?;
+        Ok(view)
+    }
+    /// Has the provider replace a key with a new one, for providers that can.
+    pub fn rotate_now(&self, id: &str) -> Result<CredentialView> {
+        let old: Credential = self.vault.get("credential", id)?;
+        ensure!(
+            !old.view.connection_id.is_empty(),
+            "Paste the new value to rotate this key"
+        );
+        let connection: Connection = self.vault.get("connection", &old.view.connection_id)?;
+        ensure!(
+            self.manifest(&connection.view.plugin_id)?
+                .operations
+                .contains(&OperationKind::RotateCredential),
+            "Paste the new value to rotate this key"
+        );
+        let Outcome::Credential(remote) = self.execute(
+            &old.view.connection_id,
+            Operation::RotateCredential {
+                resource: old.view.resource.clone(),
+                credential: old.view.provider_id.clone(),
+            },
+            None,
+            None,
+        )?
+        else {
+            bail!("Provider did not return the new key")
+        };
+        let tx = self.vault.write()?;
+        let replaced = remote.id != old.view.provider_id;
+        let mut c = self.save_remote(&old.view.connection_id, remote)?;
+        c.view.groups = old.view.groups.clone();
+        c.view.problem = None;
+        self.vault.put("credential", &c.view.id, &c)?;
+        if replaced {
+            crate::rotation::mark_retired(&self.vault, &old)?;
+        }
+        self.vault.event("credential.rotated", &c.view.id)?;
+        tx.commit()?;
+        Ok(c.view)
     }
     pub fn connect_token(
         &self,
@@ -412,7 +652,7 @@ impl App {
                 .source
                 .as_deref()
                 .filter(|s| ![PASTED, DEDICATED].contains(s))
-            && let Ok((_, Found::Material(auth))) = discover::load(source)
+            && let Ok((_, Found::Material(auth))) = discover::load(&self.manifests(), source)
         {
             connection.auth = *auth;
         }
@@ -459,7 +699,7 @@ impl App {
                     provider_id,
                     BTreeMap::from([("token".to_owned(), token.clone())]),
                     *expires_at,
-                    discover::sign_in_name(source),
+                    discover::sign_in_name(&self.manifests(), source),
                 )
             }
             AuthMaterial::Aws {
@@ -486,7 +726,7 @@ impl App {
                     details.insert("region".into(), region);
                 }
                 let name = sso.as_ref().map_or_else(
-                    || discover::sign_in_name(source),
+                    || discover::sign_in_name(&self.manifests(), source),
                     |s| format!("{} role", s.role_name),
                 );
                 (access_key_id.clone(), fields, *expires_at, name)
@@ -525,6 +765,7 @@ impl App {
                     .map(|c| c.view.groups.clone())
                     .unwrap_or_default(),
                 problem: None,
+                plugin_id: String::new(),
             },
             value: Some(SecretValue { fields }),
             details,
@@ -537,22 +778,23 @@ impl App {
         }
         Ok(credential)
     }
-    /// Sign-ins on this device that aren't connected yet and connect without a browser. Adding a
-    /// plugin looks for just its sign-ins; a refresh (`None`) looks for every plugin with an
-    /// active account and leaves sign-ins the person disconnected alone.
+    /// Sign-ins and keys on this device that aren't in GetKeys yet and save without a browser.
+    /// Adding a provider looks for just its own; a refresh (`None`) looks for every provider
+    /// with an active account or installed, and leaves sign-ins the person disconnected alone.
     pub fn scan_sources(&self, plugin: Option<&str>) -> Result<Vec<Discovery>> {
+        if let Some(p) = plugin {
+            self.ensure_installed(p)?;
+        }
         let connections = self.vault.list::<Connection>("connection")?;
+        let credentials = self.vault.list::<Credential>("credential")?;
         let active = |c: &Connection| c.view.state != ConnectionState::Disconnected;
-        let plugins: Vec<String> = match plugin {
-            Some(p) => {
-                self.ensure_installed(p)?;
-                vec![p.to_owned()]
-            }
+        let installed = self.installed_ids();
+        let wanted = |d: &Discovery| match plugin {
+            Some(p) => d.plugin_id == p,
+            None if d.key => installed.contains(&d.plugin_id),
             None => connections
                 .iter()
-                .filter(|c| active(c))
-                .map(|c| c.view.plugin_id.clone())
-                .collect(),
+                .any(|c| active(c) && c.view.plugin_id == d.plugin_id),
         };
         let known = |source: &str| {
             connections.iter().any(|c| {
@@ -561,11 +803,18 @@ impl App {
                         || c.linked.iter().any(|l| l == source))
             })
         };
-        Ok(discover::scan()
+        let manifests = self.manifests();
+        Ok(discover::scan(&manifests)
             .into_iter()
-            .filter(|d| plugins.contains(&d.plugin_id) && !known(&d.id))
-            // Browser sign-ins (IAM Identity Center) need the person, so they stay in Connect.
-            .filter(|d| matches!(discover::load(&d.id), Ok((_, Found::Material(_)))))
+            .filter(|d| wanted(d) && (d.key || !known(&d.id)))
+            .filter(|d| match discover::load(&manifests, &d.id) {
+                // Browser sign-ins (IAM Identity Center) need the person, so they stay in Connect.
+                Ok((_, Found::Material(_))) => true,
+                Ok((_, Found::Key(value))) => {
+                    new_key(&credentials, &format!("found:{}", d.id), &value)
+                }
+                _ => false,
+            })
             .collect())
     }
     /// Text to put on the clipboard: one field's value, or every exported field as `.env` lines.
@@ -603,6 +852,9 @@ impl App {
         Ok(lines.join("\n") + "\n")
     }
     fn fields(&self, c: &Credential) -> Result<Vec<KeyField>> {
+        if !c.view.plugin_id.is_empty() {
+            return Ok(key_fields(&self.manifest(&c.view.plugin_id)?, c));
+        }
         if c.view.connection_id.is_empty() {
             return Ok(custom_fields(c));
         }
@@ -639,8 +891,19 @@ impl App {
         let Some(value) = c.value.clone() else {
             return Ok(c.view.problem);
         };
-        if c.view.connection_id.is_empty() || c.view.retired || c.view.credential_type == SIGN_IN {
+        if c.view.retired || c.view.credential_type == SIGN_IN {
             return Ok(c.view.problem);
+        }
+        if c.view.connection_id.is_empty() {
+            if c.view.plugin_id.is_empty() {
+                return Ok(c.view.problem);
+            }
+            let problem = match crate::http::probe(&self.manifest(&c.view.plugin_id)?, &value)? {
+                Some(false) => Some(REJECTED.to_owned()),
+                Some(true) => None,
+                None => return Ok(c.view.problem),
+            };
+            return self.set_problem(id, problem);
         }
         let result = self.execute(
             &c.view.connection_id,
@@ -655,7 +918,7 @@ impl App {
             Err(e) => {
                 let cause = e.root_cause().to_string();
                 if cause.starts_with("unauthorized:") || cause.starts_with("forbidden:") {
-                    Some("Rejected by the provider. It was revoked or is wrong.".to_owned())
+                    Some(REJECTED.to_owned())
                 } else if cause.contains("different provider account") {
                     None
                 } else {
@@ -663,6 +926,9 @@ impl App {
                 }
             }
         };
+        self.set_problem(id, problem)
+    }
+    fn set_problem(&self, id: &str, problem: Option<String>) -> Result<Option<String>> {
         let mut current: Credential = self.vault.get("credential", id)?;
         if current.view.problem != problem {
             current.view.problem = problem.clone();
@@ -770,6 +1036,7 @@ impl App {
                     .map(|c| c.view.groups.clone())
                     .unwrap_or_default(),
                 problem: None,
+                plugin_id: String::new(),
             },
             value: Some(SecretValue { fields: secrets }),
             details,
@@ -1204,6 +1471,14 @@ impl App {
             "Finish the active rotation before deleting this key"
         );
         if c.view.connection_id.is_empty() {
+            // A provider's key held on its own is revoked on the provider's page.
+            if let Ok(m) = self.manifest(&c.view.plugin_id)
+                && !c.view.retired
+                && m.token_page.starts_with("https://")
+            {
+                open::that_detached(&m.token_page).context("Unable to open the system browser")?;
+                return Ok(Deletion::Manual { url: m.token_page });
+            }
             self.forget(&c)?;
             return Ok(Deletion::Deleted);
         }
@@ -1238,6 +1513,9 @@ impl App {
     /// Finishes deleting a key the person revoked on the provider's page.
     pub fn confirm_deleted(&self, id: &str) -> Result<()> {
         let c: Credential = self.vault.get("credential", id)?;
+        if c.view.connection_id.is_empty() {
+            return self.forget(&c);
+        }
         let connection: Connection = self.vault.get("connection", &c.view.connection_id)?;
         let manifest = self.manifest(&connection.view.plugin_id)?;
         if !c.view.provider_id.starts_with("import-")
@@ -1316,6 +1594,29 @@ pub const DOTENV: &str = ".env";
 
 /// `credential_type` of a key that belongs to no provider.
 pub const CUSTOM: &str = "custom";
+
+/// `credential_type` of a provider's key held on its own, outside any account.
+pub const API_KEY: &str = "api_key";
+
+const REJECTED: &str = "Rejected by the provider. It was revoked or is wrong.";
+
+/// Whether a key found on this device is new or changed. Keys the person deleted stay deleted,
+/// and a value GetKeys already holds elsewhere isn't listed twice.
+fn new_key(credentials: &[Credential], id: &str, value: &SecretValue) -> bool {
+    if let Some(saved) = credentials.iter().find(|c| c.view.id == id) {
+        return !saved.view.retired
+            && saved.value.as_ref().map(|v| &v.fields) != Some(&value.fields);
+    }
+    let Some(primary) = value.fields.values().next() else {
+        return false;
+    };
+    !credentials.iter().any(|c| {
+        !c.view.retired
+            && c.value
+                .as_ref()
+                .is_some_and(|v| v.fields.values().any(|x| x == primary))
+    })
+}
 
 /// Why a key no longer works, from what is known without asking the provider.
 fn problem(

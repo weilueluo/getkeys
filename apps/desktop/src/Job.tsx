@@ -7,8 +7,16 @@ import { FAILED, listed } from './secrets';
 
 export type Step = { label: string; state: 'running' | 'done' | 'failed'; detail?: string };
 export type Job = { title: string; steps: Step[]; running: boolean; stopping: boolean };
-/** Which accounts a job covers: one account, a provider's, a list of them, or all of them. */
-export type Scope = { plugin?: string; connection?: string; connections?: string[] };
+/**
+ * What a job covers: one account, a provider's, a list of accounts and keys kept on their own,
+ * or all of them.
+ */
+export type Scope = {
+  plugin?: string;
+  connection?: string;
+  connections?: string[];
+  keys?: string[];
+};
 export type Outcome = {
   snapshot: Snapshot;
   /** Keys that weren't in the vault before. */
@@ -81,11 +89,12 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
         const stopped = () => stop.current;
         if (!scope.connection && !scope.connections) {
           const sources =
-            (await step('Looking for sign-ins on this device', () =>
+            (await step('Looking for sign-ins and keys on this device', () =>
               request<Discovery[]>({ kind: 'scan_sources', plugin_id: scope.plugin ?? null }),
             )) ?? [];
           await pool(sources, 6, stopped, async (d) => {
-            const progress = await step(`Connecting ${d.account || d.source}`, () =>
+            const name = d.account || d.source;
+            const progress = await step(d.key ? `Saving ${name}` : `Connecting ${name}`, () =>
               request<AuthProgress>({
                 kind: 'connect_local',
                 source_id: d.id,
@@ -177,12 +186,48 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
             );
           });
         });
+        // Keys kept on their own, outside any account, are checked with their provider directly.
+        const checked = new Set<string>();
+        const own = scope.connection
+          ? []
+          : (await refresh()).credentials.filter(
+              (k) =>
+                k.plugin_id &&
+                !k.connection_id &&
+                !k.retired &&
+                k.value_available &&
+                (scope.connections
+                  ? !!scope.keys?.includes(k.id)
+                  : !scope.plugin || k.plugin_id === scope.plugin),
+            );
+        if (own.length && !stop.current)
+          await step(
+            `Checking ${own.length === 1 ? '1 key' : `${own.length} keys`}`,
+            async (note) => {
+              let done = 0;
+              await pool(own, 6, stopped, async (k) => {
+                await request({ kind: 'check', credential_id: k.id })
+                  .then(() => checked.add(k.id))
+                  .catch((e) => {
+                    if (!refusal(e)) return;
+                    refusedKeys.add(k.id);
+                    checked.add(k.id);
+                  });
+                if (own.length > 1) note(`${++done} of ${own.length}`);
+              });
+              note('');
+            },
+          );
         snapshot = await refresh();
         // Keys the provider refused or rejected go in Failed; keys that came through leave it.
         let refused = 0;
         let moved = false;
         for (const k of stop.current ? [] : snapshot.credentials) {
-          if (!listedAccounts.has(k.connection_id) || k.credential_type === 'sign_in') continue;
+          if (
+            !(listedAccounts.has(k.connection_id) || checked.has(k.id)) ||
+            k.credential_type === 'sign_in'
+          )
+            continue;
           const failing = refusedKeys.has(k.id) || !!k.problem;
           if (failing === k.groups.includes(FAILED)) continue;
           if (failing) refused++;

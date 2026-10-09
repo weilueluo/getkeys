@@ -36,6 +36,7 @@ const connected = (pluginId: string, name: string, source: string): AuthProgress
 };
 const key = (c: Partial<CredentialView>): CredentialView => ({
   id: 'key',
+  plugin_id: '',
   connection_id: 'connection',
   provider_id: 'key',
   name: 'Key',
@@ -215,6 +216,7 @@ describe('GetKeys workflows', () => {
         source: 'Supabase CLI',
         account: 'Personal projects',
         connected: false,
+        key: false,
       },
     ];
     listed = ({ connection_id }) => {
@@ -250,6 +252,7 @@ describe('GetKeys workflows', () => {
         source: 'GitHub CLI',
         account: 'octocat',
         connected: false,
+        key: false,
       },
     ];
     render(<App />);

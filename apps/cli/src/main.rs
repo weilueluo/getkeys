@@ -106,6 +106,10 @@ fn run() -> Result<()> {
                         std::thread::sleep(std::time::Duration::from_secs(interval));
                         progress = app.poll_auth(&flow_id)?;
                     }
+                    AuthProgress::KeySaved { credential } => {
+                        println!("{}", credential.name);
+                        break;
+                    }
                     AuthProgress::Pending { interval } => {
                         std::thread::sleep(std::time::Duration::from_secs(interval));
                         progress = app.poll_auth(&flow_id)?;

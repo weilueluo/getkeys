@@ -40,6 +40,7 @@ fn cli_redacts_inventory_requires_deliberate_reveal_and_injects_only_into_the_ch
                     resource_name: String::new(),
                     groups: Vec::new(),
                     problem: None,
+                    plugin_id: String::new(),
                 },
                 details: BTreeMap::new(),
                 value: Some(SecretValue {

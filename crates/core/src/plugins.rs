@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, VerifyingKey};
-use getkeys_plugin_api::{API_VERSION, Call, Manifest, Outcome, Step};
+use getkeys_plugin_api::{Call, Manifest, Outcome, ProviderKind, Step};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,13 +15,20 @@ pub const TRUSTED_KEY: &str = include_str!("../../../registry/public-key.hex");
 #[serde(deny_unknown_fields)]
 pub struct Package {
     pub manifest: Manifest,
+    /// The provider's code; empty for declarative providers.
+    #[serde(default)]
     pub wasm: String,
+    /// Digest of the code, or of the manifest JSON for declarative providers.
     pub sha256: String,
+}
+impl Package {
+    pub fn declarative(&self) -> bool {
+        self.manifest.kind == ProviderKind::Declarative
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Catalog {
-    pub version: u32,
     pub packages: Vec<Package>,
 }
 
@@ -42,7 +49,6 @@ pub fn verify_catalog(bytes: &[u8], signature: &str, key: &str) -> Result<Catalo
     key.verify_strict(bytes, &sig)
         .context("Marketplace signature is invalid")?;
     let catalog: Catalog = serde_json::from_slice(bytes)?;
-    ensure!(catalog.version == 1, "Unsupported marketplace format");
     let mut ids = std::collections::HashSet::new();
     for p in &catalog.packages {
         validate_manifest(&p.manifest)?;
@@ -51,7 +57,11 @@ pub fn verify_catalog(bytes: &[u8], signature: &str, key: &str) -> Result<Catalo
             "Duplicate provider in the catalog"
         );
         ensure!(
-            safe_name(&p.wasm) && p.wasm.ends_with(".wasm"),
+            if p.declarative() {
+                p.wasm.is_empty()
+            } else {
+                safe_name(&p.wasm) && p.wasm.ends_with(".wasm")
+            },
             "Invalid provider package path"
         );
         ensure!(
@@ -70,10 +80,6 @@ fn safe_name(s: &str) -> bool {
 }
 pub fn validate_manifest(m: &Manifest) -> Result<()> {
     ensure!(
-        m.api_version == API_VERSION,
-        "This provider needs a different GetKeys version"
-    );
-    ensure!(
         safe_name(&m.id) && safe_name(&m.version),
         "Invalid provider identity or version"
     );
@@ -89,7 +95,29 @@ pub fn validate_manifest(m: &Manifest) -> Result<()> {
             "Invalid provider host declaration"
         );
     }
+    ensure!(
+        m.kind == ProviderKind::Managed || m.operations.is_empty(),
+        "A declarative provider cannot declare operations"
+    );
+    if !m.key_pattern.is_empty() {
+        regex::Regex::new(&m.key_pattern).context("Invalid provider key pattern")?;
+    }
+    if let Some(v) = &m.validate {
+        crate::http::validate_url(&v.url, &m.hosts).context("Invalid provider check URL")?;
+    }
+    let mut sources = std::collections::HashSet::new();
+    for s in &m.sources {
+        ensure!(
+            sources.insert(crate::discover::source_id(s)),
+            "Duplicate provider source"
+        );
+    }
     Ok(())
+}
+
+/// The bytes a package's digest covers.
+pub fn manifest_bytes(m: &Manifest) -> Vec<u8> {
+    serde_json::to_vec(m).unwrap_or_default()
 }
 
 impl Registry {
@@ -126,14 +154,28 @@ impl Registry {
             return Ok(None);
         }
         // The complete signed catalog is retained so installed versions remain verifiable after an update.
-        let saved: Installed = serde_json::from_slice(&std::fs::read(pointer)?)?;
-        let catalog = verify_catalog(saved.catalog.as_bytes(), &saved.signature, &self.key)?;
-        let package = catalog
-            .packages
-            .into_iter()
-            .find(|p| p.manifest.id == id)
-            .context("Installed provider is absent from its signed catalog")?;
-        Ok(Some(package))
+        let verified = || -> Result<Package> {
+            let saved: Installed = serde_json::from_slice(&std::fs::read(&pointer)?)?;
+            let catalog = verify_catalog(saved.catalog.as_bytes(), &saved.signature, &self.key)?;
+            catalog
+                .packages
+                .into_iter()
+                .find(|p| p.manifest.id == id)
+                .context("Installed provider is absent from its signed catalog")
+        };
+        match verified() {
+            Ok(package) => Ok(Some(package)),
+            Err(_) => {
+                // Installed from a catalog this GetKeys no longer reads: replace it with the
+                // current package so its accounts keep working.
+                std::fs::remove_file(&pointer)?;
+                if self.package(id).is_err() {
+                    return Ok(None);
+                }
+                self.install(id, true)?;
+                verified().map(Some)
+            }
+        }
     }
     pub fn install(&self, id: &str, accept_permissions: bool) -> Result<()> {
         let package = self.package(id)?;
@@ -154,18 +196,22 @@ impl Registry {
                 "This update requests additional permissions. Review and approve the provider update."
             );
         }
-        let bytes = std::fs::read(self.source.join(&package.wasm))?;
-        verify_artifact(package, &bytes)?;
-        let mut runtime = Runtime::new(package.clone(), &bytes)?;
-        let actual: Manifest =
-            serde_json::from_str(runtime.plugin.call::<_, String>("describe", "")?.as_str())?;
-        ensure!(
-            actual == package.manifest,
-            "Provider code and catalog manifest disagree"
-        );
-        let artifact = self.installed.join(format!("{}.wasm", package.sha256));
-        if !artifact.exists() {
-            std::fs::write(&artifact, &bytes)?;
+        if package.declarative() {
+            verify_artifact(package, &manifest_bytes(&package.manifest))?;
+        } else {
+            let bytes = std::fs::read(self.source.join(&package.wasm))?;
+            verify_artifact(package, &bytes)?;
+            let mut runtime = Runtime::new(package.clone(), &bytes)?;
+            let actual: Manifest =
+                serde_json::from_str(runtime.plugin.call::<_, String>("describe", "")?.as_str())?;
+            ensure!(
+                actual == package.manifest,
+                "Provider code and catalog manifest disagree"
+            );
+            let artifact = self.installed.join(format!("{}.wasm", package.sha256));
+            if !artifact.exists() {
+                std::fs::write(&artifact, &bytes)?;
+            }
         }
         let saved = Installed {
             catalog: std::fs::read_to_string(self.source.join("index.json"))?,
@@ -185,6 +231,10 @@ impl Registry {
         let p = self
             .installed_package(id)?
             .context("Add this provider first")?;
+        ensure!(
+            !p.declarative(),
+            "This provider has no account features; its keys are listed on their own"
+        );
         let bytes = std::fs::read(self.installed.join(format!("{}.wasm", p.sha256)))?;
         verify_artifact(&p, &bytes)?;
         Runtime::new(p, &bytes)
@@ -213,7 +263,7 @@ impl Registry {
         let catalog = verify_catalog(&index, &signature, TRUSTED_KEY)?;
         let staging = path.with_extension(crate::new_id()?);
         std::fs::create_dir_all(&staging)?;
-        for package in &catalog.packages {
+        for package in catalog.packages.iter().filter(|p| !p.declarative()) {
             let bytes = fetch(&package.wasm)?;
             verify_artifact(package, &bytes)?;
             std::fs::write(staging.join(&package.wasm), bytes)?;
@@ -339,15 +389,91 @@ mod tests {
     #[test]
     fn signatures_bind_the_entire_catalog() {
         let key = SigningKey::from_bytes(&[3; 32]);
-        let bytes = br#"{"version":1,"packages":[]}"#;
+        let bytes = br#"{"packages":[]}"#;
         let sig = STANDARD.encode(key.sign(bytes).to_bytes());
         let public = hex::encode(key.verifying_key().as_bytes());
         assert!(verify_catalog(bytes, &sig, &public).is_ok());
-        assert!(verify_catalog(br#"{"version":2,"packages":[]}"#, &sig, &public).is_err());
+        assert!(verify_catalog(br#"{"packages": []}"#, &sig, &public).is_err());
     }
     #[test]
     fn rejects_artifact_traversal() {
         assert!(!safe_name("../evil.wasm"));
         assert!(!safe_name("C:\\evil.wasm"));
+    }
+    #[test]
+    fn installs_declarative_providers_without_code() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "test.acme", "name": "Acme", "publisher": "t", "version": "1", "description": "",
+            "homepage": "https://acme.dev", "kind": "declarative", "hosts": ["api.acme.dev"],
+            "credential_fields": [], "key_pattern": "^acme_[a-z]+$",
+            "validate": {"url": "https://api.acme.dev/me"},
+            "sources": [{"kind": "env", "var": "ACME_KEY", "role": "key"}]
+        }))
+        .unwrap();
+        let sha256 = hex::encode(Sha256::digest(manifest_bytes(&manifest)));
+        let catalog = |sha256: &str| {
+            serde_json::to_vec(&Catalog {
+                packages: vec![Package {
+                    manifest: manifest.clone(),
+                    wasm: String::new(),
+                    sha256: sha256.into(),
+                }],
+            })
+            .unwrap()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let write = |bytes: &[u8]| {
+            std::fs::write(dir.path().join("index.json"), bytes).unwrap();
+            std::fs::write(
+                dir.path().join("index.sig"),
+                STANDARD.encode(key.sign(bytes).to_bytes()),
+            )
+            .unwrap();
+        };
+        let public = hex::encode(key.verifying_key().as_bytes());
+        // A digest that doesn't cover the manifest is refused.
+        write(&catalog(&"0".repeat(64)));
+        let bad =
+            Registry::with_key(dir.path().into(), dir.path().join("installed"), &public).unwrap();
+        assert!(bad.install("test.acme", false).is_err());
+        write(&catalog(&sha256));
+        let registry =
+            Registry::with_key(dir.path().into(), dir.path().join("installed"), &public).unwrap();
+        registry.install("test.acme", false).unwrap();
+        assert!(registry.installed_package("test.acme").unwrap().is_some());
+        assert!(registry.load("test.acme").is_err());
+        // An install from a catalog this build can't read is replaced silently.
+        std::fs::write(dir.path().join("installed").join("test.acme.json"), "{}").unwrap();
+        assert!(registry.installed_package("test.acme").unwrap().is_some());
+    }
+    #[test]
+    fn rejects_unsafe_manifests() {
+        let base = serde_json::json!({
+            "id": "test.acme", "name": "Acme", "publisher": "t", "version": "1", "description": "",
+            "homepage": "https://acme.dev", "kind": "declarative", "hosts": ["api.acme.dev"],
+            "credential_fields": []
+        });
+        let with = |k: &str, v: serde_json::Value| {
+            let mut m = base.clone();
+            m[k] = v;
+            validate_manifest(&serde_json::from_value(m).unwrap())
+        };
+        assert!(
+            with(
+                "validate",
+                serde_json::json!({"url": "https://evil.dev/me"})
+            )
+            .is_err()
+        );
+        assert!(with("key_pattern", serde_json::json!("(")).is_err());
+        assert!(with("operations", serde_json::json!(["identity"])).is_err());
+        assert!(
+            with(
+                "sources",
+                serde_json::json!([{"kind":"env","var":"A"},{"kind":"env","var":"A"}])
+            )
+            .is_err()
+        );
     }
 }

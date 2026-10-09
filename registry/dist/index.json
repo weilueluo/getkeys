@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "packages": [
     {
       "manifest": {
@@ -7,9 +6,10 @@
         "name": "AWS",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "api_version": 1,
         "description": "Sign in with IAM Identity Center and manage IAM access keys.",
         "homepage": "https://aws.amazon.com",
+        "kind": "managed",
+        "category": "cloud",
         "hosts": [
           "iam.amazonaws.com",
           "sts.amazonaws.com"
@@ -113,10 +113,35 @@
           }
         ],
         "token_page": "https://console.aws.amazon.com/iam/home#/security_credentials",
-        "account_credentials": false
+        "account_credentials": false,
+        "key_pattern": "^(AKIA|ASIA)[A-Z0-9]{16}$",
+        "validate": null,
+        "sources": [
+          {
+            "id": "",
+            "label": "Environment",
+            "role": "account",
+            "field": "token",
+            "kind": "aws_env"
+          },
+          {
+            "id": "",
+            "label": "IAM Identity Center",
+            "role": "account",
+            "field": "token",
+            "kind": "aws_sso"
+          },
+          {
+            "id": "",
+            "label": "AWS CLI profile",
+            "role": "account",
+            "field": "token",
+            "kind": "aws_profiles"
+          }
+        ]
       },
       "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "e25dfbebc5f7b3b7708c72af26f0e513161a9c790d5351d0cb1beb421938d941"
+      "sha256": "b821efb5a1d3b0ffaf393a550a99e724c909aadbacefc26bbb868e8c194959b4"
     },
     {
       "manifest": {
@@ -124,9 +149,10 @@
         "name": "GitHub",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "api_version": 1,
         "description": "Connect repositories, store tokens, and update Actions secrets.",
         "homepage": "https://github.com",
+        "kind": "managed",
+        "category": "devtools",
         "hosts": [
           "api.github.com",
           "github.com"
@@ -167,10 +193,43 @@
           }
         ],
         "token_page": "https://github.com/settings/tokens/new?description=GetKeys&scopes=repo,read:user",
-        "account_credentials": false
+        "account_credentials": false,
+        "key_pattern": "^(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})$",
+        "validate": {
+          "url": "https://api.github.com/user",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "GitHub CLI",
+            "role": "account",
+            "field": "token",
+            "kind": "gh_cli"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "GH_TOKEN"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "GITHUB_TOKEN"
+          }
+        ]
       },
       "wasm": "official.github-0.1.0.wasm",
-      "sha256": "e6ec6947f3cccbfad402eadfd3ab85a95b8d5bdfa6a22c4fe12a55371a02137a"
+      "sha256": "e5a7a0916000e2921f5a2d0b44a0259f7f479339ac9f4882bd3406a03e175249"
     },
     {
       "manifest": {
@@ -178,9 +237,10 @@
         "name": "Supabase",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "api_version": 1,
         "description": "Find project keys and rotate server credentials.",
         "homepage": "https://supabase.com",
+        "kind": "managed",
+        "category": "database",
         "hosts": [
           "api.supabase.com",
           "*.supabase.co"
@@ -228,10 +288,56 @@
           }
         ],
         "token_page": "https://supabase.com/dashboard/account/tokens",
-        "account_credentials": false
+        "account_credentials": false,
+        "key_pattern": "^(sbp_[a-f0-9]{40}|sb_secret_[A-Za-z0-9_-]{20,})$",
+        "validate": null,
+        "sources": [
+          {
+            "id": "supabase",
+            "label": "Supabase CLI",
+            "role": "account",
+            "field": "token",
+            "kind": "file",
+            "paths": [
+              "~/.supabase/access-token"
+            ],
+            "format": "text",
+            "pointer": "",
+            "expires_pointer": "",
+            "renew": []
+          },
+          {
+            "id": "supabase_keyring",
+            "label": "Supabase CLI",
+            "role": "account",
+            "field": "token",
+            "kind": "keyring",
+            "service": "Supabase CLI",
+            "user": "supabase",
+            "target": "Supabase CLI:supabase",
+            "go_keyring": true,
+            "hint": "~/.supabase"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "SUPABASE_ACCESS_TOKEN"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "SUPABASE_TOKEN"
+          }
+        ]
       },
       "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "122d51348f5f9f45b885c83a57aca7fbc3188993462847e885efe6083e216b6f"
+      "sha256": "0dfc63009b1064624026b325ad4949312488e062aabfc57c50c1c4e5cb2db9e4"
     },
     {
       "manifest": {
@@ -239,9 +345,10 @@
         "name": "Vercel",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "api_version": 1,
         "description": "Keep account tokens and deliver secrets to your deployments.",
         "homepage": "https://vercel.com",
+        "kind": "managed",
+        "category": "cloud",
         "hosts": [
           "api.vercel.com",
           "vercel.com"
@@ -282,10 +389,50 @@
           }
         ],
         "token_page": "https://vercel.com/account/settings/tokens",
-        "account_credentials": true
+        "account_credentials": true,
+        "key_pattern": "",
+        "validate": {
+          "url": "https://api.vercel.com/v2/user",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "vercel",
+            "label": "Vercel CLI",
+            "role": "account",
+            "field": "token",
+            "kind": "file",
+            "paths": [
+              "{env:XDG_DATA_HOME}/com.vercel.cli/auth.json",
+              "{data}/xdg.data/com.vercel.cli/auth.json",
+              "{data}/com.vercel.cli/auth.json",
+              "{data}/com.vercel.cli/Data/auth.json",
+              "~/.local/share/com.vercel.cli/auth.json",
+              "~/.now/auth.json"
+            ],
+            "format": "json",
+            "pointer": "/token",
+            "expires_pointer": "/expiresAt",
+            "renew": [
+              "vercel",
+              "whoami"
+            ]
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "VERCEL_TOKEN"
+          }
+        ]
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "d08c3cb49b287edbcb74bb80c4972d2c9b9c0d1d042cfcca33d42fb0abd3a527"
+      "sha256": "1241da3e8787fc2ee43f374574584ba5d817911b578145a2bcc9f7262485823c"
     }
   ]
 }

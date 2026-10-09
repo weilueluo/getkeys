@@ -107,6 +107,9 @@ pub struct CredentialView {
     /// hasn't been checked.
     #[serde(default)]
     pub problem: Option<String>,
+    /// The provider of a key held on its own, outside any account; empty otherwise.
+    #[serde(default)]
+    pub plugin_id: String,
 }
 
 /// One labelled part of a key, such as an access key ID, secret, region, or account ID.
@@ -247,6 +250,10 @@ pub enum AuthProgress {
     },
     Pending {
         interval: u64,
+    },
+    /// A key found on this device was saved on its own.
+    KeySaved {
+        credential: Box<CredentialView>,
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
