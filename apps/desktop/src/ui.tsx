@@ -84,21 +84,24 @@ export function KeyGlyph({ size = 18 }: { size?: number }) {
   );
 }
 
+/**
+ * The top of a page. Pages with a search put it first and their actions at the end, so both
+ * sit in the same place on every page; the sidebar names the page, so the title is for screen
+ * readers only. Pages without a search show their title.
+ */
 export function PageHeader({
   title,
-  description,
+  search,
   children,
 }: {
   title: string;
-  description?: ReactNode;
+  search?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <header className="page-header">
-      <div>
-        <h1>{title}</h1>
-        {description && <p>{description}</p>}
-      </div>
+    <header className={`page-header ${search ? 'with-search' : ''}`}>
+      <h1 className={search ? 'visually-hidden' : undefined}>{title}</h1>
+      {search}
       {children && <div className="page-header-actions">{children}</div>}
     </header>
   );

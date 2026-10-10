@@ -3,7 +3,7 @@
   "name": "GitHub",
   "publisher": "getkeys",
   "version": "0.1.0",
-  "description": "Keep GitHub tokens and open the page to create fine-grained ones.",
+  "description": "Make fine-grained GitHub tokens on a filled-in page, and revoke them for you.",
   "homepage": "https://github.com",
   "category": "devtools",
   "hosts": ["api.github.com", "github.com"],
@@ -14,7 +14,13 @@
     "client_id_env": "GETKEYS_GITHUB_CLIENT_ID",
     "scopes": "repo read:user"
   },
-  "operations": ["identity", "list_resources", "validate_credential", "guide"],
+  "operations": [
+    "identity",
+    "list_resources",
+    "validate_credential",
+    "revoke_credential",
+    "guide"
+  ],
   "fields": [],
   "credential_fields": [
     {
@@ -35,6 +41,8 @@
     }
   ],
   "token_page": "https://github.com/settings/tokens/new?description=GetKeys&scopes=repo,read:user",
+  "key_page": "https://github.com/settings/personal-access-tokens/new?name={name}&description=Made%20with%20GetKeys&target_name={owner}&expires_in=90&contents=write&pull_requests=write&issues=write",
+  "revoke_by_value": true,
   "key_pattern": "^(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})$",
   "validate": { "url": "https://api.github.com/user" },
   "sources": [

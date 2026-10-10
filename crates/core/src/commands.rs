@@ -22,6 +22,14 @@ pub enum Command {
     OpenTokenPage {
         plugin_id: String,
     },
+    /// Opens the provider's page for making a key by hand, filled in where it can be, and
+    /// returns its address.
+    OpenKeyPage {
+        plugin_id: String,
+        connection_id: Option<String>,
+        resource: String,
+        name: String,
+    },
     ConnectToken {
         plugin_id: String,
         fields: BTreeMap<String, String>,
@@ -146,6 +154,7 @@ pub enum Command {
         name: String,
         fields: BTreeMap<String, String>,
     },
+    /// Replaces a key with a new one from its provider and retires the old one.
     RotateNow {
         credential_id: String,
     },
@@ -174,6 +183,10 @@ pub enum Command {
     ConnectAgent {
         client: AgentClient,
     },
+    /// Removes `getkeys mcp` from an agent app's MCP configuration.
+    DisconnectAgent {
+        client: AgentClient,
+    },
 }
 impl Command {
     /// Whether the command can change what the vault holds, so open windows reload.
@@ -188,6 +201,9 @@ impl Command {
                 | Command::GetPrefs
                 | Command::AgentStatus
                 | Command::OpenTokenPage { .. }
+                | Command::OpenKeyPage { .. }
+                | Command::ConnectAgent { .. }
+                | Command::DisconnectAgent { .. }
                 | Command::OpenVaultFolder
                 | Command::Export { .. }
                 | Command::Guide { .. }
@@ -207,7 +223,38 @@ impl App {
         }
         Ok(())
     }
+    /// Runs a command. Failures are also written to the local log, where the details that
+    /// aren't worth showing live.
     pub fn dispatch(&self, command: Command) -> Result<Value> {
+        let kind = to_value(&command)
+            .ok()
+            .and_then(|v| v.get("kind")?.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        self.run(command)
+            .inspect_err(|e| self.log(&format!("{kind}: {e:#}")))
+    }
+    /// Appends a line to `getkeys.log` beside the vault, starting over past about a megabyte.
+    pub fn log(&self, line: &str) {
+        let Some(folder) = self.vault.path().parent() else {
+            return;
+        };
+        let path = folder.join("getkeys.log");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+            let _ = std::fs::remove_file(&path);
+        }
+        let stamp = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_default();
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{stamp} {}", line.replace('\n', " "));
+        }
+    }
+    fn run(&self, command: Command) -> Result<Value> {
         Ok(match command {
             Command::Snapshot => to_value(self.snapshot()?)?,
             Command::Resolve { lines, via } => {
@@ -226,6 +273,20 @@ impl App {
             Command::ConnectAgent { client } => {
                 agents::connect(client, &client.config()?, &agents::cli_path()?)?;
                 to_value(agents::status()?)?
+            }
+            Command::DisconnectAgent { client } => {
+                agents::disconnect(client, &client.config()?)?;
+                to_value(agents::status()?)?
+            }
+            Command::OpenKeyPage {
+                plugin_id,
+                connection_id,
+                resource,
+                name,
+            } => {
+                let url = self.key_page(&plugin_id, connection_id.as_deref(), &resource, &name)?;
+                open::that_detached(&url).context("Unable to open the system browser")?;
+                to_value(url)?
             }
             Command::Discover => to_value(self.discover()?)?,
             Command::ConnectLocal {

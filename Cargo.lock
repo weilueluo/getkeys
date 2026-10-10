@@ -2596,7 +2596,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-auth-broker"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2633,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "age",
  "anyhow",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-anthropic"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-aws"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-cloudflare"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-gemini"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-github"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-gitlab"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2756,7 +2756,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-openai"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-openrouter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2774,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-supabase"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -2783,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "getkeys-plugin-vercel"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "extism-pdk",
  "getkeys-plugin-api",
@@ -8794,7 +8794,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

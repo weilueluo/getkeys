@@ -47,6 +47,7 @@
           }
         ],
         "token_page": "https://console.anthropic.com/settings/admin-keys",
+        "key_page": "https://console.anthropic.com/settings/keys",
         "account_credentials": false,
         "key_pattern": "^sk-ant-(api|admin)\\d\\d-[A-Za-z0-9_-]{20,}$",
         "validate": {
@@ -78,7 +79,7 @@
         ]
       },
       "wasm": "official.anthropic-0.1.0.wasm",
-      "sha256": "d58a39e8eb26eda7aa430a6a821bffa681db10924b038c511b4b6f3d727efd0c"
+      "sha256": "a6d09e81561f89d29085bc18b6802b6cef965a055c1d78ba4350be97fb7a48c5"
     },
     {
       "manifest": {
@@ -221,7 +222,7 @@
         ]
       },
       "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "2b21d981f296b50ec733c4a922ce71917edcabf0d814a74498e6834fed445f71"
+      "sha256": "0a8fe3fcb4c728e8394b1643b476d1f31f755ee85db99bc5a5a0f9e5d717544a"
     },
     {
       "manifest": {
@@ -289,7 +290,7 @@
         ]
       },
       "wasm": "official.cloudflare-0.1.0.wasm",
-      "sha256": "1dbebe253fd2ef2dcc164f7aa3d80b0a4fdc7888ba22c744afb23d84cf8b388f"
+      "sha256": "40d3b2688cf45564263cda011ffc968e671f96a6c599b410eab6924bb9404f74"
     },
     {
       "manifest": {
@@ -563,7 +564,7 @@
         ]
       },
       "wasm": "official.gemini-0.1.0.wasm",
-      "sha256": "92228eec38dd4a311786bee1ff4ac3a8a66a1c5966d64c6a3f9414cc35aacabf"
+      "sha256": "7450cf0d881efaf4e4389ef956296f2331345493bd4c6253309b638a6b18a0c0"
     },
     {
       "manifest": {
@@ -571,7 +572,7 @@
         "name": "GitHub",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "description": "Keep GitHub tokens and open the page to create fine-grained ones.",
+        "description": "Make fine-grained GitHub tokens on a filled-in page, and revoke them for you.",
         "homepage": "https://github.com",
         "kind": "managed",
         "category": "devtools",
@@ -590,6 +591,7 @@
           "identity",
           "list_resources",
           "validate_credential",
+          "revoke_credential",
           "guide"
         ],
         "fields": [],
@@ -614,6 +616,8 @@
           }
         ],
         "token_page": "https://github.com/settings/tokens/new?description=GetKeys&scopes=repo,read:user",
+        "key_page": "https://github.com/settings/personal-access-tokens/new?name={name}&description=Made%20with%20GetKeys&target_name={owner}&expires_in=90&contents=write&pull_requests=write&issues=write",
+        "revoke_by_value": true,
         "account_credentials": false,
         "key_pattern": "^(gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{60,})$",
         "validate": {
@@ -650,7 +654,7 @@
         ]
       },
       "wasm": "official.github-0.1.0.wasm",
-      "sha256": "712434377a3ddc2729fcd6754b171f46f9a1bb488f8624076a8a8a9b1ff2e7f2"
+      "sha256": "00059d4228c2e6f3eb68a01f06e68f048acb9a443681ea69f6edfd9d6750aaf8"
     },
     {
       "manifest": {
@@ -697,6 +701,7 @@
           }
         ],
         "token_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name=GetKeys&scopes=api",
+        "key_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name={name}&scopes=api",
         "account_credentials": true,
         "key_pattern": "^glpat-[A-Za-z0-9_.-]{20,}$",
         "validate": {
@@ -718,7 +723,7 @@
         ]
       },
       "wasm": "official.gitlab-0.1.0.wasm",
-      "sha256": "d859a72fbe986eab72a32a9fcec9360cde1bd824296dd57d84131f19ef4a56c4"
+      "sha256": "ae6938a68d1bb8b3b8f8c539dbbacb4a2bf80925f8d15ba7084e15d6dda48031"
     },
     {
       "manifest": {
@@ -949,6 +954,7 @@
           }
         ],
         "token_page": "https://platform.openai.com/settings/organization/admin-keys",
+        "key_page": "https://platform.openai.com/api-keys",
         "account_credentials": false,
         "key_pattern": "^sk-((proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})$",
         "validate": {
@@ -978,7 +984,7 @@
         ]
       },
       "wasm": "official.openai-0.1.0.wasm",
-      "sha256": "8ec3ea06a915559425fa2391c1ae70d424cea38e9f86f866336d4825acf31868"
+      "sha256": "b186e17c379a7ee7f5ddf46032376d36a8f62d78fa8ddd9bab2f4f80321b92a2"
     },
     {
       "manifest": {
@@ -1056,7 +1062,7 @@
         ]
       },
       "wasm": "official.openrouter-0.1.0.wasm",
-      "sha256": "570275c51f9c969e9d1fbb719a260b96fe26b99b757c836e4ef5e489fc3e842d"
+      "sha256": "b974f0444c2e4607ea9299dc2dfbd8b55ec896a67ee2797a2b5b8e09e8c6544b"
     },
     {
       "manifest": {
@@ -1441,7 +1447,7 @@
         }
       },
       "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "ea36d8f3f8e7a772164ca74e219f3c6a5acb01cfcf5f8b50faad073b3ffa8564"
+      "sha256": "01b28a8206a049fc174c34852e96e7081ad7d25aa9ee35c0c6d0ee139874d9ff"
     },
     {
       "manifest": {
@@ -1588,7 +1594,7 @@
         ]
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "10a747f39d418208d6c0614af486214f0928e4ffc82a4b9ff82a35135a10c6e3"
+      "sha256": "b3dfaef726f92a5072aeb409835088583525efeb66c83d0ecd43669df65c3e35"
     },
     {
       "manifest": {

@@ -38,8 +38,8 @@ With [provider setup](setup.md) complete, check these behaviors with real accoun
 1. Add each provider and authorize in the system browser. For AWS, choose an assigned account/role. Test denial and expiration too.
 2. Reconnect the same account from its provider in **Providers**. Existing keys must remain attached. A different identity or Vercel team must be rejected.
 3. Restart the app and confirm the connection persists without requesting authorization again. Test Supabase refresh after access-token expiry.
-4. Rotate a disposable AWS or Supabase key. Confirm the old key keeps working until you retire it, and stops after.
-5. For GitHub/Vercel personal tokens, create a new token in the provider, import it as a new key, and choose it under **Replace in provider**. Revoke the old token in the provider, then confirm manual retirement in GetKeys. Integration consent is not permission to create arbitrary personal tokens.
+4. Rotate a disposable AWS or Supabase key with **Rotate** in its details. Confirm the new key works, keeps the old one's name and groups, and the old key stops working.
+5. Make a GitHub personal token with **New key**: GitHub's new-token page must open filled in, and copying the token there must save it in GetKeys without pasting. Rotate it the same way and confirm GetKeys revokes the old token through the API. Do the same for a Vercel token. Integration consent is not permission to create arbitrary personal tokens.
 
 ## CI release configuration
 

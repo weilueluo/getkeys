@@ -70,12 +70,7 @@ export function Marketplace({
     setOpen((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]));
   return (
     <>
-      <PageHeader
-        title="Providers"
-        description="Add a provider and GetKeys brings in its keys from this device and your accounts."
-      >
-        {searchField}
-      </PageHeader>
+      <PageHeader title="Providers" search={searchField} />
       <Tabs
         label="Provider filter"
         value={filter}

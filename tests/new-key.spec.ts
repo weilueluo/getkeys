@@ -152,10 +152,9 @@ test('new key: provider, account, a new project for it, then the key', async ({ 
   await page.screenshot({ path: 'artifacts/journey-new-key-provider.png' });
   expect((await new AxeBuilder({ page }).include('dialog').analyze()).violations).toEqual([]);
   await dialog.getByRole('button', { name: /^Supabase/ }).click();
-  await dialog
-    .getByRole('group', { name: 'Account' })
-    .getByRole('button', { name: /^Ada/ })
-    .click();
+  // The only account is picked by itself.
+  await expect(dialog.getByRole('group', { name: 'Account' })).toHaveCount(0);
+  await expect(dialog.locator('.cascade-step.done')).toContainText(['Supabase', 'Ada']);
   const project = dialog.getByRole('group', { name: 'Project' });
   await expect(project.getByRole('button', { name: /^website/ })).toBeVisible();
   await expect(dialog.getByLabel('Name', { exact: true })).toHaveCount(0);
@@ -179,9 +178,10 @@ test('new key: provider, account, a new project for it, then the key', async ({ 
     { connection_id: 'sb', owner: 'ada-org', name: 'my-app', options: { region: 'emea' } },
   ]);
 
-  await dialog.getByRole('button', { name: /Create a new key/ }).click();
+  // Supabase makes the key, so there is nothing to paste.
+  await expect(dialog.getByLabel('API key')).toHaveCount(0);
   await dialog.getByLabel('Name', { exact: true }).fill('App server');
-  await page.screenshot({ path: 'artifacts/journey-new-key.png' });
+  await page.screenshot({ path: 'artifacts/journey-new-key-name.png' });
   await dialog.getByRole('button', { name: 'Create key' }).click();
   await expect(dialog).toHaveCount(0);
   expect(await sent(page, 'create')).toMatchObject([

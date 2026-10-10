@@ -603,6 +603,10 @@ main {
   gap: 24px;
   margin-bottom: 22px;
 }
+.page-header.with-search {
+  align-items: center;
+  min-height: 36px;
+}
 .page-header p {
   max-width: 560px;
   margin-top: 4px;
@@ -1674,19 +1678,6 @@ main {
 }
 
 /* Key status and groups */
-.badge.invalid {
-  height: 20px;
-  padding: 0 6px 0 5px;
-  gap: 4px;
-  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
-  background: var(--danger-tint);
-  color: var(--danger-text);
-  font-size: 11px;
-  cursor: help;
-}
-.key-item.invalid > .key-line {
-  box-shadow: inset 2px 0 0 var(--danger);
-}
 .group-tag {
   display: inline-block;
   margin-left: 6px;
@@ -1705,6 +1696,9 @@ main {
 }
 .callout > svg {
   margin-top: 2px;
+}
+.key-details .callout {
+  margin-bottom: 12px;
 }
 .callout.danger {
   margin-bottom: 12px;

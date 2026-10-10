@@ -7,8 +7,8 @@ import { request } from './bridge';
 export const SIGN_IN = 'sign_in';
 /** Credential type of a key added by hand that belongs to no provider. */
 export const CUSTOM = 'custom';
-/** The group that collects keys a provider refused: no permission to list them, or rejected. */
-export const FAILED = 'Failed';
+/** Problem of a key its account may not list, so it couldn't be checked; it still works. */
+export const NO_PERMISSION = "This account isn't allowed to list it, so it can't be checked";
 /** Whether an account signs in with a key found on this device (a CLI, profile, or variable),
  * rather than one pasted in or created for GetKeys. Such keys are listed under Keys. */
 export const borrowed = (source: string | null) =>

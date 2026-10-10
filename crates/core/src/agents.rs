@@ -107,6 +107,20 @@ pub fn connect(client: AgentClient, path: &Path, cli: &Path) -> Result<()> {
         .with_context(|| format!("Unable to write {}", path.display()))
 }
 
+/// Removes GetKeys from a client's MCP servers in `path`, keeping everything else in the file.
+pub fn disconnect(client: AgentClient, path: &Path) -> Result<()> {
+    let mut config = read(path)?;
+    let removed = config
+        .get_mut(client.servers())
+        .and_then(Value::as_object_mut)
+        .and_then(|servers| servers.remove(SERVER));
+    if removed.is_none() {
+        return Ok(());
+    }
+    std::fs::write(path, serde_json::to_string_pretty(&config)? + "\n")
+        .with_context(|| format!("Unable to write {}", path.display()))
+}
+
 pub fn configured(client: AgentClient, path: &Path) -> bool {
     read(path).is_ok_and(|c| c[client.servers()][SERVER].is_object())
 }
@@ -171,5 +185,24 @@ mod tests {
         std::fs::write(&path, "{ not json").unwrap();
         assert!(connect(AgentClient::Cursor, &path, cli).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+    }
+    #[test]
+    fn disconnecting_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        disconnect(AgentClient::Cursor, &path).unwrap();
+        assert!(!path.exists());
+        std::fs::write(
+            &path,
+            r#"{"theme":"dark","mcpServers":{"other":{"command":"x"}}}"#,
+        )
+        .unwrap();
+        connect(AgentClient::Cursor, &path, Path::new("getkeys")).unwrap();
+        assert!(configured(AgentClient::Cursor, &path));
+        disconnect(AgentClient::Cursor, &path).unwrap();
+        assert!(!configured(AgentClient::Cursor, &path));
+        let file: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(file["theme"], "dark");
+        assert_eq!(file["mcpServers"]["other"]["command"], "x");
     }
 }

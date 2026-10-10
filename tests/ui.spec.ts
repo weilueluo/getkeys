@@ -71,6 +71,12 @@ async function mockHost(page: Page, connected: boolean | Snapshot = false) {
             return null;
           }
           if (c.kind === 'reveal') return { fields: { token: 'only-revealed-on-request' } };
+          if (c.kind === 'rotate_now') {
+            const i = data.credentials.findIndex((k) => k.id === c.credential_id);
+            const made = { ...data.credentials[i], id: 'rotated', origin: 'rotated' };
+            data.credentials.splice(i, 1, made);
+            return made;
+          }
           if (c.kind === 'plan_rotation') {
             const r = {
               id: 'rotation',
@@ -128,13 +134,16 @@ test('adding a provider shows progress, then asks for a token when local sign-in
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.evaluate(() => (window as unknown as { release: () => void }).release());
   const dialog = page.getByRole('dialog', { name: 'Connect GitHub' });
-  await expect(dialog.getByRole('alert')).toContainText('didn’t work');
+  // Why the sign-in didn't work goes to the local log, not the screen.
+  await expect(dialog.getByLabel('Token', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText('Bad credentials')).toHaveCount(0);
   await expect(dialog.getByLabel('Token', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'artifacts/connect.png' });
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
-test('keys stay masked, have firm actions, and rotate from the row', async ({ page }) => {
+test('keys stay masked, have firm actions, and rotate from their details', async ({ page }) => {
   await mockHost(page, true);
   await page.goto('/');
   const keys = page.getByRole('list', { name: 'Keys' });
@@ -142,8 +151,9 @@ test('keys stay masked, have firm actions, and rotate from the row', async ({ pa
   await expect(keys.getByRole('listitem')).toHaveCount(3);
   await expect(page.getByRole('button', { name: /Import/ })).toHaveCount(0);
   await expect(keys.getByRole('listitem').filter({ hasText: 'Vercel CLI' })).toBeVisible();
-  for (const action of ['Reveal', 'Copy', 'Rotate', 'Delete'])
+  for (const action of ['Reveal', 'Copy', 'Delete'])
     await expect(page.getByRole('button', { name: `${action} Production API` })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Rotate Production API' })).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/keys.png', fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await expect(page.getByText('only-revealed-on-request')).toHaveCount(0);
@@ -151,28 +161,30 @@ test('keys stay masked, have firm actions, and rotate from the row', async ({ pa
   await expect(page.getByText('only-revealed-on-request')).toBeVisible();
   await page.getByRole('button', { name: 'Hide Production API' }).click();
   await expect(page.getByText('only-revealed-on-request')).toHaveCount(0);
-  await page.getByRole('tab', { name: /Empty profiles/ }).click();
+  await page.getByRole('tab', { name: /Others/ }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(1);
+  await expect(keys).toContainText('No secret on this device');
   await expect(page.getByRole('button', { name: 'Fill in deploy-bot' })).toBeVisible();
   await page.screenshot({ path: 'artifacts/keys-secretless.png', fullPage: true });
   await page.getByRole('tab', { name: /Ready to use/ }).click();
   await page.getByRole('button', { name: 'Details for Production API' }).click();
   const details = page.getByRole('region', { name: 'Production API details' });
   await expect(details).toContainText('SUPABASE_URL');
+  await expect(details).toContainText('Listed by Supabase in Personal projects');
   await page.screenshot({ path: 'artifacts/key-details.png', fullPage: true });
-  await page.getByRole('button', { name: 'Rotate Production API' }).click();
-  const rotate = page.getByRole('dialog', { name: 'Rotate Production API' });
-  await expect(rotate).toContainText('wherever you use it');
+  await details.getByRole('button', { name: 'Rotate Production API' }).click();
+  const rotate = page.getByRole('dialog', { name: 'Rotate Production API?' });
+  await expect(rotate).toContainText('Supabase makes a new key in its place');
   await page.screenshot({ path: 'artifacts/rotate.png' });
-  await rotate.getByRole('button', { name: 'Review rotation plan' }).click();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await rotate.getByRole('button', { name: 'Rotate', exact: true }).click();
+  await expect(page.getByText('Key rotated')).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(details.getByRole('list', { name: 'Rotation progress' })).toBeVisible();
-  await expect(details.getByRole('button', { name: 'Create replacement' })).toBeVisible();
-  await expect(keys.getByRole('listitem').filter({ hasText: 'Production API' })).toContainText(
-    'Rotating',
+  await page.getByRole('button', { name: 'Details for Production API' }).click();
+  await expect(page.getByRole('region', { name: 'Production API details' })).toContainText(
+    'Made by GetKeys to replace an older key',
   );
-  await expect(page.getByRole('button', { name: 'Retire old key' })).toHaveCount(0);
-  await page.screenshot({ path: 'artifacts/rotation.png', fullPage: true });
+  await page.screenshot({ path: 'artifacts/rotated.png', fullPage: true });
 });
 test('management keys live with their accounts under Providers', async ({ page }) => {
   await mockHost(page, true);
@@ -207,7 +219,6 @@ test('groups, rejected keys, keys without a provider, and export', async ({ page
   const [api, cli] = data.credentials;
   api.groups = ['backend'];
   cli.problem = 'Rejected by the provider. It was revoked or is wrong.';
-  cli.groups = ['Failed'];
   data.credentials.push({
     ...api,
     id: 'custom',
@@ -234,18 +245,22 @@ test('groups, rejected keys, keys without a provider, and export', async ({ page
   await mockHost(page, data);
   await page.goto('/');
   const keys = page.getByRole('list', { name: 'Keys' });
-  await expect(keys.getByRole('listitem')).toHaveCount(4);
-  await expect(keys.getByRole('listitem').filter({ hasText: 'Supabase CLI' })).toContainText(
-    'Invalid',
-  );
+  await expect(keys.getByRole('listitem')).toHaveCount(3);
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Supabase CLI' })).toHaveCount(0);
   await expect(keys.getByRole('listitem').filter({ hasText: 'OpenAI' })).toContainText('Custom');
   await page.screenshot({ path: 'artifacts/keys-groups.png', fullPage: true });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole('tab', { name: /^backend/ }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(2);
-  await page.getByRole('tab', { name: /^Failed/ }).click();
-  await expect(keys.getByRole('listitem')).toHaveCount(1);
-  await page.screenshot({ path: 'artifacts/keys-failed.png', fullPage: true });
+  // Keys GetKeys can't use wait under Others with the reason, not as errors.
+  await page.getByRole('tab', { name: /^Others/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(2);
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Supabase CLI' })).toContainText(
+    'Rejected by the provider',
+  );
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Invalid' })).toHaveCount(0);
+  await page.screenshot({ path: 'artifacts/keys-others.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole('button', { name: 'New group' }).click();
   await page.getByLabel('New group name').fill('staging');
   await page.keyboard.press('Enter');
@@ -282,7 +297,7 @@ test('groups, rejected keys, keys without a provider, and export', async ({ page
 test('a key’s groups link to them, and Filter narrows only the tab in view', async ({ page }) => {
   const data = withVercel(connectedSnapshot());
   data.credentials[0].groups = ['backend'];
-  data.credentials[1].problem = 'Rejected by the provider. It was revoked or is wrong.';
+  data.credentials[1].problem = "This account isn't allowed to list it, so it can't be checked";
   await mockHost(page, data);
   await page.goto('/');
   const keys = page.getByRole('list', { name: 'Keys' });
@@ -311,7 +326,7 @@ test('a key’s groups link to them, and Filter narrows only the tab in view', a
   await page.getByRole('tab', { name: /^Ready to use/ }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(3);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
-  await page.getByRole('menuitemcheckbox', { name: 'Invalid' }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Not checked' }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(1);
   await expect(keys).toContainText('Supabase CLI');
   await page.screenshot({ path: 'artifacts/filter.png', fullPage: true });

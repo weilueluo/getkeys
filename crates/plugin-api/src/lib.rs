@@ -34,6 +34,15 @@ pub struct Manifest {
     /// Provider page where a user creates a token to paste.
     #[serde(default)]
     pub token_page: String,
+    /// Provider page where a person makes an API key, for providers that can't make one through
+    /// their API. `{name}` and `{owner}` (the repository owner or account) are filled in, and
+    /// query parameters left empty are dropped. Falls back to `token_page`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key_page: String,
+    /// `revoke_credential` revokes a key given its value, so keys pasted in or made on the
+    /// provider's page can be revoked too. The value is sent through `secret` injection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revoke_by_value: bool,
     /// The account's own access tokens are listed, created and revoked under resource `""`.
     /// A token the plugin lists with credential type `sign_in` is the one the connection uses.
     #[serde(default)]
@@ -379,8 +388,17 @@ pub struct HttpRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SecretInjection {
-    JsonField { field: String },
-    SealedBox { public_key: String, key_id: String },
+    JsonField {
+        field: String,
+    },
+    /// Appends the secret to the JSON array at `field`.
+    JsonArray {
+        field: String,
+    },
+    SealedBox {
+        public_key: String,
+        key_id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]

@@ -78,6 +78,11 @@ pub fn save_remote(
         // The provider still lists it, so it exists.
         problem: None,
         plugin_id: String::new(),
+        origin: previous
+            .as_ref()
+            .map(|c| c.view.origin.clone())
+            .filter(|o| !o.is_empty())
+            .unwrap_or_else(|| origin::LISTED.into()),
     };
     let details = if remote.details.is_empty() {
         previous.map(|c| c.details).unwrap_or_default()

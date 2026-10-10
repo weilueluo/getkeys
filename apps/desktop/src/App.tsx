@@ -166,10 +166,8 @@ export function App() {
     setError('');
     setConnecting({ plugin: target.p, connectionId: id, rotate: true });
   };
-  const failedNote = (o: Outcome) => (o.refused ? ` · ${o.refused} moved to Failed` : '');
   const summary = (o: Outcome) =>
-    (o.added ? `Found ${keyCount(o.added)}` : o.cancelled ? 'Stopped' : 'Keys are up to date') +
-    failedNote(o);
+    o.added ? `Found ${keyCount(o.added)}` : o.cancelled ? 'Stopped' : 'Keys are up to date';
   /** Looks for new sign-ins on this device, then lists the keys in each account in `scope`. */
   const refreshKeys = async (
     scope: { connection?: string; connections?: string[]; label?: string } = {},
@@ -208,18 +206,14 @@ export function App() {
     if (!accounts.length) {
       if (outcome.cancelled) return;
       // Nothing usable on this device: ask for a token or a browser sign-in instead.
-      const failure = outcome.failed.find((s) => s.label.startsWith('Connecting'));
       close();
-      if (failure) setError(`The ${name} sign-in on this device didn’t work (${failure.detail}).`);
       setConnecting({ plugin, tried: true });
       return;
     }
     changePage('vault');
     if (!outcome.failed.length || outcome.cancelled)
       setNotice(
-        outcome.cancelled
-          ? summary(outcome)
-          : `Added ${name} · ${keyCount(outcome.added)}${failedNote(outcome)}`,
+        outcome.cancelled ? summary(outcome) : `Added ${name} · ${keyCount(outcome.added)}`,
       );
   };
   const dedicate = (id: string, rotating: boolean) =>

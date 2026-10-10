@@ -10,65 +10,190 @@ concurrency:
   # Called from Release, github.workflow is "Release", so releases never cancel CI or each other.
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  CARGO_TERM_COLOR: always
+  # CI never attaches a debugger; without debug info, builds and caches are much smaller.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+# Every job runs at once. `npm run check` runs the same stages one after another.
 jobs:
-  checks:
-    name: checks (${{ matrix.os }})
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          components: rustfmt
+          cache-key: lint
+      - run: node scripts/check.mjs lint
+      - name: Verify generated contracts are committed
+        run: git diff --exit-code -- apps/desktop/src/types.ts
+
+  clippy:
+    name: clippy (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          components: clippy
+          cache-key: clippy-${{ matrix.os }}
+      - run: node scripts/check.mjs clippy
+
+  rust:
+    name: rust tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: test-${{ matrix.os }}
+      - if: runner.os != 'Linux'
+        run: node scripts/check.mjs rust
+      - if: runner.os == 'Linux'
+        # The vault key lives in the OS credential store; give the headless runner a session bus
+        # and an unlocked GNOME Keyring login collection.
+        run: dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && node scripts/check.mjs rust'
+
+  web:
+    name: web (vitest, browser journeys, audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          rust: 'false'
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/check.mjs web
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-web
+          path: |
+            artifacts/
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  native:
+    name: native journeys (${{ matrix.mode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [dev, packaged]
+    # Native tests drive the app's WebView2 over CDP, which only Windows offers.
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: native-${{ matrix.mode }}
+      - if: matrix.mode == 'dev'
+        run: node scripts/check.mjs native
+      - if: matrix.mode == 'packaged'
+        run: npm run desktop -- build --debug
+      - if: matrix.mode == 'packaged'
+        name: Test the packaged app without a development server
+        run: npm run test:packaged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-native-${{ matrix.mode }}
+          path: |
+            artifacts/
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  package:
+    name: package (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { name: macos-arm64, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: macos-x64, os: macos-latest, target: x86_64-apple-darwin }
+          # The oldest supported Ubuntu keeps the AppImage and deb compatible with older glibc.
+          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          targets: wasm32-unknown-unknown, ${{ matrix.target }}
+          # Builds on main keep this warm, so a release tag starts from a cached build.
+          cache-key: package-${{ matrix.target }}
+      - run: npm run desktop -- build --target ${{ matrix.target }}
+      - name: Collect the app bundle and the standalone CLI
+        shell: bash
+        env:
+          NAME: ${{ matrix.name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          out=target/$TARGET/release
+          mkdir -p release
+          case "$RUNNER_OS" in
+            Windows)
+              cp "$out"/bundle/nsis/*.exe release/
+              cp "$out/getkeys.exe" "release/getkeys-$NAME.exe"
+              ;;
+            macOS)
+              cp "$out"/bundle/dmg/*.dmg release/
+              ;;
+            Linux)
+              cp "$out"/bundle/appimage/*.AppImage "$out"/bundle/deb/*.deb release/
+              ;;
+          esac
+          if [ "$RUNNER_OS" != Windows ]; then
+            # The CLI finds the provider registry in a registry/ folder beside it.
+            cli="target/getkeys-$NAME"
+            mkdir -p "$cli"
+            cp "$out/getkeys" "$cli/"
+            cp -R registry/dist "$cli/registry"
+            tar -czf "release/getkeys-$NAME.tar.gz" -C "$cli" getkeys registry
+          fi
+          ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  extensions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
-          components: rustfmt, clippy
-          targets: wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - name: Select Strawberry Perl for vendored OpenSSL
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - run: npm run extensions:build
+      - name: Collect the extensions and the signed provider registry
         run: |
-          $perl = 'C:\Strawberry\perl\bin\perl.exe'
-          if (!(Test-Path -LiteralPath $perl)) { throw 'Strawberry Perl is required' }
-          "PERL=$perl" >> $env:GITHUB_ENV
-      - name: Install Tauri and Secret Service dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev libdbus-1-dev \
-            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf file xdg-utils \
-            gnome-keyring dbus-x11
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - name: Run checks
-        if: runner.os != 'Linux'
-        run: npm run check
-      - name: Run checks with an unlocked Secret Service keyring
-        if: runner.os == 'Linux'
-        # The vault key lives in the OS credential store; give the headless runner a session bus
-        # and an unlocked GNOME Keyring login collection.
-        run: dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon --unlock --components=secrets >/dev/null && npm run check'
-      - name: Verify generated contracts are committed
-        run: git diff --exit-code -- apps/desktop/src/types.ts
-      - name: Validate desktop packaging
-        run: npm run desktop -- build --debug
-      - name: Test the packaged app without a development server
-        if: runner.os == 'Windows'
-        run: npm run test:packaged
+          mkdir -p release
+          cp extensions/browser/getkeys-browser.zip extensions/vscode/getkeys.vsix registry/dist/* release/
+          ls -la release
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: validation-evidence-${{ runner.os }}
-          path: |
-            artifacts/
-            playwright-report/
-            test-results/
+          name: release-extensions
+          path: release/*
+          if-no-files-found: error
           retention-days: 7

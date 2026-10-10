@@ -105,6 +105,12 @@ pub fn validate_manifest(m: &Manifest) -> Result<()> {
     if let Some(v) = &m.validate {
         crate::http::validate_url(&v.url, &m.hosts).context("Invalid provider check URL")?;
     }
+    for page in [&m.token_page, &m.key_page] {
+        ensure!(
+            page.is_empty() || page.starts_with("https://"),
+            "Provider pages must use HTTPS"
+        );
+    }
     let mut sources = std::collections::HashSet::new();
     for s in &m.sources {
         ensure!(

@@ -52,9 +52,10 @@ async function statefulHost(page: Page, data: Snapshot) {
         __TAURI_INTERNALS__: { invoke: (name: string, args: any) => Promise<unknown> };
         isTauri: boolean;
         commands: any[];
+        captures: any[];
         reject: boolean;
       };
-      const key = (id: string, name: string): CredentialView => ({
+      const key = (id: string, name: string, origin = 'pasted'): CredentialView => ({
         id,
         plugin_id: 'official.groq',
         connection_id: '',
@@ -72,6 +73,7 @@ async function statefulHost(page: Page, data: Snapshot) {
         retired: false,
         groups: [],
         problem: null,
+        origin,
         fields: [
           {
             key: 'token',
@@ -85,12 +87,31 @@ async function statefulHost(page: Page, data: Snapshot) {
       });
       const find = (id: string) => data.credentials.find((c) => c.id === id)!;
       let saved = 0;
+      let prefs = { mcp_enabled: false };
+      let agents = [
+        {
+          client: 'claude_code',
+          name: 'Claude Code',
+          path: 'C:\\Users\\ada\\.claude.json',
+          configured: false,
+        },
+      ];
       host.commands = [];
+      host.captures = [];
       host.reject = false;
       host.isTauri = true;
       host.__TAURI_INTERNALS__ = {
         invoke: async (name, args) => {
           if (name === 'copy_credential' || name === 'export_env') return true;
+          if (name === 'cancel_capture') return null;
+          if (name === 'capture_key') {
+            // The person makes the key on Groq's page and copies it; GetKeys picks it up.
+            host.captures.push(args);
+            const made = key(`key-${++saved}`, args.name, 'captured');
+            if (args.replaces) made.groups = find(args.replaces).groups;
+            data.credentials.push(made);
+            return made;
+          }
           if (name.startsWith('plugin:')) return false;
           const c = args.command;
           host.commands.push(c);
@@ -116,15 +137,16 @@ async function statefulHost(page: Page, data: Snapshot) {
                   ];
             }
             case 'connect_local': {
-              const credential = key('found:env:GROQ_API_KEY', 'GROQ_API_KEY');
+              const credential = key('found:env:GROQ_API_KEY', 'GROQ_API_KEY', 'found');
               data.credentials.push(credential);
               return { kind: 'key_saved', credential };
             }
             case 'check': {
               const k = find(c.credential_id);
-              k.problem = host.reject
-                ? 'Rejected by the provider. It was revoked or is wrong.'
-                : null;
+              k.problem =
+                host.reject && k.id.startsWith('found:')
+                  ? 'Rejected by the provider. It was revoked or is wrong.'
+                  : null;
               return k;
             }
             case 'set_groups':
@@ -135,12 +157,6 @@ async function statefulHost(page: Page, data: Snapshot) {
             case 'open_token_page':
               return null;
             case 'save_key': {
-              if (c.credential_id) {
-                const k = find(c.credential_id);
-                k.problem = null;
-                k.groups = k.groups.filter((g) => g !== 'Failed');
-                return k;
-              }
               const credential = key(`key-${++saved}`, c.name);
               data.credentials.push(credential);
               return credential;
@@ -151,9 +167,18 @@ async function statefulHost(page: Page, data: Snapshot) {
               data.credentials = data.credentials.filter((k) => k.id !== c.credential_id);
               return null;
             case 'get_prefs':
-              return { mcp_enabled: false };
+              return prefs;
+            case 'set_prefs':
+              prefs = c.prefs;
+              return prefs;
             case 'agent_status':
-              return [];
+              return agents;
+            case 'connect_agent':
+            case 'disconnect_agent':
+              agents = agents.map((a) =>
+                a.client === c.client ? { ...a, configured: c.kind === 'connect_agent' } : a,
+              );
+              return agents;
             case 'uninstall':
               data.plugins.find((p) => p.manifest.id === c.plugin_id)!.installed = false;
               data.credentials = data.credentials.filter((k) => k.plugin_id !== c.plugin_id);
@@ -176,7 +201,10 @@ const sent = (page: Page, kind: string) =>
     kind,
   );
 
-test('a provider without accounts: add, find, check, add by hand, rotate, delete, remove', async ({
+const captures = (page: Page) =>
+  page.evaluate(() => (window as unknown as { captures: any[] }).captures);
+
+test('a provider without accounts: add, find, check, make, paste, reject, rotate, delete, remove', async ({
   page,
 }) => {
   await statefulHost(page, snapshot());
@@ -189,38 +217,63 @@ test('a provider without accounts: add, find, check, add by hand, rotate, delete
   await expect(card).toContainText('AI');
   await card.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(page.getByText('Added Groq · 1 key')).toBeVisible();
-  const found = keys.getByRole('listitem').filter({ hasText: 'GROQ_API_KEY' });
+  const named = (name: string) =>
+    keys.getByRole('listitem').filter({ has: page.locator('strong', { hasText: name }) });
+  const found = named('GROQ_API_KEY');
   await expect(found).toContainText('Groq · On this device');
   expect(await sent(page, 'check')).toHaveLength(1);
+  await page.getByRole('button', { name: 'Details for GROQ_API_KEY' }).click();
+  await expect(page.getByRole('region', { name: 'GROQ_API_KEY details' })).toContainText(
+    'Found on this device, in $GROQ_API_KEY',
+  );
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
-  // A refresh checks the key again; once Groq rejects it, it moves to Failed.
-  await page.evaluate(() => ((window as unknown as { reject: boolean }).reject = true));
-  await page.getByRole('button', { name: 'Refresh keys' }).click();
-  await expect(page.getByText('moved to Failed')).toBeVisible();
-  await expect(found).toContainText('Invalid');
-  await page.getByRole('tab', { name: /^Failed/ }).click();
-  await expect(keys.getByRole('listitem')).toHaveCount(1);
-  await page.getByRole('tab', { name: /^Ready to use/ }).click();
-  await page.evaluate(() => ((window as unknown as { reject: boolean }).reject = false));
-
-  // New key starts with the provider; Groq needs no account, so it goes straight to the key.
+  // New key starts with the provider. Groq makes keys only on its page: GetKeys opens it
+  // and picks the new key up from the clipboard, so there is nothing to paste.
   await page.getByRole('button', { name: 'New key' }).click();
-  const form = page.getByRole('dialog', { name: 'New key' });
+  let form = page.getByRole('dialog', { name: 'New key' });
   await form.getByRole('button', { name: /^Groq/ }).click();
-  await expect(form.locator('.cascade-step.done')).toContainText(['Groq', 'No account', 'Paste']);
+  await expect(form.locator('.cascade-step.done')).toHaveText([/Groq/]);
   await expect(form.getByRole('button', { name: 'Change account' })).toHaveCount(0);
+  await expect(form.getByLabel('API key')).toHaveCount(0);
   await form.getByLabel('Name').fill('Laptop');
-  await form.getByLabel('API key').fill('gsk_pasted');
   await page.screenshot({ path: 'artifacts/journey-new-key.png' });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await form.getByRole('button', { name: /Make it on Groq/ }).click();
+  await expect(page.getByText('Saved Laptop')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await captures(page)).toEqual([
+    {
+      pluginId: 'official.groq',
+      connectionId: null,
+      resource: '',
+      name: 'Laptop',
+      group: null,
+      replaces: null,
+    },
+  ]);
+  const laptop = keys.getByRole('listitem').filter({ hasText: 'Laptop' });
+  await page.getByRole('button', { name: 'Details for Laptop' }).click();
+  await expect(page.getByRole('region', { name: 'Laptop details' })).toContainText(
+    'Made on Groq’s page',
+  );
+
+  // Pasting a key made elsewhere is the fallback.
+  await page.getByRole('button', { name: 'New key' }).click();
+  form = page.getByRole('dialog', { name: 'New key' });
+  await form.getByRole('button', { name: /^Groq/ }).click();
+  await form.getByRole('button', { name: /Already have a key\? Paste it/ }).click();
+  await form.getByLabel('Name').fill('Desk');
+  await form.getByLabel('API key').fill('gsk_pasted');
   await form.getByRole('button', { name: 'Save key' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  const laptop = keys.getByRole('listitem').filter({ hasText: 'Laptop' });
-  await expect(laptop).toContainText('Groq · Added by you');
+  await expect(keys.getByRole('listitem').filter({ hasText: 'Desk' })).toContainText(
+    'Groq · Added by you',
+  );
   expect((await sent(page, 'save_key'))[0]).toMatchObject({
     credential_id: null,
     plugin_id: 'official.groq',
-    name: 'Laptop',
+    name: 'Desk',
     fields: { token: 'gsk_pasted' },
   });
 
@@ -229,20 +282,41 @@ test('a provider without accounts: add, find, check, add by hand, rotate, delete
   await expect(laptop).toContainText('gsk_value_of_key-1');
   await page.getByRole('button', { name: 'Hide Laptop' }).click();
 
-  // Rotating opens Groq's key page and takes the new value in place of the old.
+  // Once Groq rejects the found key, a refresh moves it to Others with the reason. That's
+  // not an error: the refresh still succeeds and nothing turns red.
+  await page.evaluate(() => ((window as unknown as { reject: boolean }).reject = true));
+  await page.getByRole('button', { name: 'Refresh keys' }).click();
+  await expect(page.getByText('Keys are up to date')).toBeVisible();
+  await expect(found).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await page.getByRole('tab', { name: /^Others/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(1);
+  await expect(found).toContainText('Rejected by the provider');
+  await expect(found).not.toContainText('Invalid');
+  await page.screenshot({ path: 'artifacts/journey-others.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.evaluate(() => ((window as unknown as { reject: boolean }).reject = false));
+
+  // Rotating it opens Groq's page, keeps the new key and deletes the old one.
+  await page.getByRole('button', { name: 'Details for GROQ_API_KEY' }).click();
   await page.getByRole('button', { name: 'Rotate GROQ_API_KEY' }).click();
   const rotate = page.getByRole('dialog', { name: 'Rotate GROQ_API_KEY' });
-  await rotate.getByRole('button', { name: 'Open Groq' }).click();
-  expect(await sent(page, 'open_token_page')).toHaveLength(1);
-  await rotate.getByLabel('New API key').fill('gsk_rotated');
   await page.screenshot({ path: 'artifacts/journey-rotate.png' });
-  await rotate.getByRole('button', { name: 'Save new key' }).click();
-  await expect(page.getByText('Key rotated')).toBeVisible();
-  await expect(found).not.toContainText('Invalid');
-  expect((await sent(page, 'save_key'))[1]).toMatchObject({
-    credential_id: 'found:env:GROQ_API_KEY',
-    fields: { token: 'gsk_rotated' },
+  await rotate.getByRole('button', { name: /Make it on Groq/ }).click();
+  expect((await captures(page))[1]).toMatchObject({
+    name: 'GROQ_API_KEY',
+    replaces: 'found:env:GROQ_API_KEY',
   });
+  // Groq deletes keys only on its page, so GetKeys asks for that last step.
+  const retire = page.getByRole('dialog', { name: 'Delete GROQ_API_KEY in Groq' });
+  await retire.getByRole('button', { name: 'Done' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(await sent(page, 'confirm_deleted')).toEqual([
+    { kind: 'confirm_deleted', credential_id: 'found:env:GROQ_API_KEY' },
+  ]);
+  await page.getByRole('tab', { name: /^Ready to use/ }).click();
+  await expect(named('GROQ_API_KEY')).toHaveCount(1);
+  await expect(page.getByRole('tab', { name: /^Others/ })).toHaveCount(0);
 
   // Deleting sends the person to Groq, then forgets the key once they're done.
   await page.getByRole('button', { name: 'Delete Laptop' }).click();
@@ -262,8 +336,30 @@ test('a provider without accounts: add, find, check, add by hand, rotate, delete
   await page.screenshot({ path: 'artifacts/journey-provider.png', fullPage: true });
   await page.getByRole('button', { name: 'Remove provider' }).click();
   const removing = page.getByRole('dialog', { name: 'Remove Groq?' });
-  await expect(removing).toContainText('1 key from Groq');
+  await expect(removing).toContainText('2 keys from Groq');
   await removing.getByRole('button', { name: 'Remove Groq' }).click();
   await page.getByRole('button', { name: /^Keys/ }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(0);
+});
+
+test('an agent gets your keys once connected, and stops once disconnected', async ({ page }) => {
+  await statefulHost(page, snapshot());
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const connect = page.getByRole('button', { name: 'Connect Claude Code' });
+  await expect(connect).toBeDisabled();
+  await page.getByRole('switch', { name: 'Allow agents' }).click();
+  await expect(page.getByText('Agents can use your keys')).toBeVisible();
+  await connect.click();
+  await expect(page.getByText('Added GetKeys to Claude Code')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reconnect Claude Code' })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/agent-connected.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.getByRole('button', { name: 'Disconnect Claude Code' }).click();
+  await expect(page.getByText('Removed GetKeys from Claude Code')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect Claude Code' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Disconnect Claude Code' })).toHaveCount(0);
+  expect(await sent(page, 'disconnect_agent')).toEqual([
+    { kind: 'disconnect_agent', client: 'claude_code' },
+  ]);
 });

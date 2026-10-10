@@ -3,7 +3,7 @@ import { Check, LoaderCircle, X } from 'lucide-react';
 import type { AuthProgress, Discovery, Resource, Snapshot } from './types';
 import { request } from './bridge';
 import { Modal } from './ui';
-import { FAILED, listed } from './secrets';
+import { listed } from './secrets';
 
 export type Step = { label: string; state: 'running' | 'done' | 'failed'; detail?: string };
 export type Job = { title: string; steps: Step[]; running: boolean; stopping: boolean };
@@ -24,10 +24,11 @@ export type Outcome = {
   failed: Step[];
   /** Accounts connected from sign-ins found on this device. */
   connected: number;
-  /** Keys newly put in the Failed group. */
-  refused: number;
   cancelled: boolean;
 };
+
+/** The group earlier versions put refused keys in; Others has taken its place. */
+const OLD_FAILED = 'Failed';
 
 const refusal = (e: unknown) => /\bforbidden:/.test(String(e));
 
@@ -62,14 +63,22 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
       setBusy(true);
       const steps: Step[] = [];
       const show = (running = true) =>
-        setJob({ title, steps: [...steps], running, stopping: running && stop.current });
+        setJob({
+          title,
+          steps: steps.map((x) => ({ ...x })),
+          running,
+          stopping: running && stop.current,
+        });
+      /** Runs a step; a `quiet` step that fails leaves the list, and the log keeps why. */
       const step = async <T,>(
         label: string,
         task: (note: (detail: string) => void) => Promise<T>,
+        quiet = false,
       ): Promise<T | undefined> => {
-        const i = steps.push({ label, state: 'running' }) - 1;
+        const entry: Step = { label, state: 'running' };
+        steps.push(entry);
         const update = (s: Partial<Step>) => {
-          steps[i] = { ...steps[i], ...s };
+          Object.assign(entry, s);
           show();
         };
         show();
@@ -78,7 +87,10 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
           update({ state: 'done' });
           return result;
         } catch (e) {
-          update({ state: 'failed', detail: String(e) });
+          if (quiet) {
+            steps.splice(steps.indexOf(entry), 1);
+            show();
+          } else update({ state: 'failed', detail: String(e) });
           return undefined;
         }
       };
@@ -94,12 +106,15 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
             )) ?? [];
           await pool(sources, 6, stopped, async (d) => {
             const name = d.account || d.source;
-            const progress = await step(d.key ? `Saving ${name}` : `Connecting ${name}`, () =>
-              request<AuthProgress>({
-                kind: 'connect_local',
-                source_id: d.id,
-                connection_id: null,
-              }),
+            const progress = await step(
+              d.key ? `Saving ${name}` : `Connecting ${name}`,
+              () =>
+                request<AuthProgress>({
+                  kind: 'connect_local',
+                  source_id: d.id,
+                  connection_id: null,
+                }),
+              true,
             );
             if (progress?.kind === 'connected') connected++;
           });
@@ -115,22 +130,12 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
                 : !scope.plugin || c.plugin_id === scope.plugin),
         );
         const current = snapshot;
-        // Keys behind a listing the provider refused, and the accounts whose listings went through.
-        const refusedKeys = new Set<string>();
-        const listedAccounts = new Set<string>();
         await pool(accounts, 8, stopped, async (c) => {
           const manifest = current.plugins.find((p) => p.manifest.id === c.plugin_id)?.manifest;
           if (!manifest) return;
           await step(`Listing keys in ${manifest.name} · ${c.name}`, async (note) => {
             const lists = manifest.operations.includes('list_credentials');
             // Account-level providers keep their keys on the account; the rest per project.
-            const mine = current.credentials.filter(
-              (k) => k.connection_id === c.id && k.credential_type !== 'sign_in' && !k.retired,
-            );
-            const refuse = (resource?: string) =>
-              mine
-                .filter((k) => resource === undefined || k.resource === resource)
-                .forEach((k) => refusedKeys.add(k.id));
             let places: string[] = [];
             try {
               places = manifest.account_credentials
@@ -141,26 +146,19 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
                     )
                   : [];
             } catch (e) {
-              if (!refusal(e)) throw e;
-              refuse();
-              listedAccounts.add(c.id);
-              note('No permission to list these keys. They’re in Failed.');
-              return;
+              // An account that may not list its projects has its keys marked as unchecked.
+              if (refusal(e)) return;
+              throw e;
             }
             const errors: string[] = [];
-            let refused = 0;
             let done = 0;
             await pool(places, 4, stopped, async (resource) => {
-              await request({ kind: 'sync', connection_id: c.id, resource }).catch((e) => {
-                if (!refusal(e)) return errors.push(String(e));
-                refused++;
-                refuse(manifest.account_credentials ? undefined : resource);
-              });
+              await request({ kind: 'sync', connection_id: c.id, resource }).catch((e) =>
+                errors.push(String(e)),
+              );
               if (places.length > 1) note(`${++done} of ${places.length}`);
             });
-            if (places.length && errors.length && errors.length + refused === places.length)
-              throw errors[0];
-            listedAccounts.add(c.id);
+            if (places.length && errors.length === places.length) throw errors[0];
             // Keys no listing confirms are asked about one by one.
             const unconfirmed = current.credentials.filter(
               (k) =>
@@ -171,23 +169,15 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
                 (!lists || k.provider_id.startsWith('import-')),
             );
             await pool(unconfirmed, 4, stopped, (k) =>
-              request({ kind: 'check', credential_id: k.id })
-                .then(() => {})
-                .catch((e) => {
-                  if (refusal(e)) refusedKeys.add(k.id);
-                }),
+              request({ kind: 'check', credential_id: k.id }).then(
+                () => {},
+                () => {},
+              ),
             );
-            note(
-              errors.length
-                ? `${errors.length} of ${places.length} couldn’t be listed: ${errors[0]}`
-                : refused
-                  ? `No permission to list ${refused} of ${places.length}. Their keys are in Failed.`
-                  : '',
-            );
+            note(errors.length ? `${errors.length} of ${places.length} couldn’t be listed` : '');
           });
         });
         // Keys kept on their own, outside any account, are checked with their provider directly.
-        const checked = new Set<string>();
         const own = scope.connection
           ? []
           : (await refresh()).credentials.filter(
@@ -206,39 +196,27 @@ export function useJob(refresh: () => Promise<Snapshot>, setBusy: (busy: boolean
             async (note) => {
               let done = 0;
               await pool(own, 6, stopped, async (k) => {
-                await request({ kind: 'check', credential_id: k.id })
-                  .then(() => checked.add(k.id))
-                  .catch((e) => {
-                    if (!refusal(e)) return;
-                    refusedKeys.add(k.id);
-                    checked.add(k.id);
-                  });
+                await request({ kind: 'check', credential_id: k.id }).then(
+                  () => {},
+                  () => {},
+                );
                 if (own.length > 1) note(`${++done} of ${own.length}`);
               });
               note('');
             },
           );
         snapshot = await refresh();
-        // Keys the provider refused or rejected go in Failed; keys that came through leave it.
-        let refused = 0;
-        let moved = false;
-        for (const k of stop.current ? [] : snapshot.credentials) {
-          if (
-            !(listedAccounts.has(k.connection_id) || checked.has(k.id)) ||
-            k.credential_type === 'sign_in'
-          )
-            continue;
-          const failing = refusedKeys.has(k.id) || !!k.problem;
-          if (failing === k.groups.includes(FAILED)) continue;
-          if (failing) refused++;
-          const groups = failing ? [...k.groups, FAILED] : k.groups.filter((g) => g !== FAILED);
-          await request({ kind: 'set_groups', credential_id: k.id, groups }).catch(() => {});
-          moved = true;
-        }
-        if (moved) snapshot = await refresh();
+        const stale = snapshot.credentials.filter((k) => k.groups.includes(OLD_FAILED));
+        for (const k of stale)
+          await request({
+            kind: 'set_groups',
+            credential_id: k.id,
+            groups: k.groups.filter((g) => g !== OLD_FAILED),
+          }).catch(() => {});
+        if (stale.length) snapshot = await refresh();
         const added = [...keys(snapshot)].filter((id) => !before.has(id)).length;
         const failed = steps.filter((s) => s.state === 'failed');
-        const outcome = { snapshot, added, failed, connected, refused, cancelled: stop.current };
+        const outcome = { snapshot, added, failed, connected, cancelled: stop.current };
         if (failed.length && !stop.current) show(false);
         else setJob(undefined);
         return outcome;

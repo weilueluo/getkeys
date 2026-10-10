@@ -1,10 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agent;
 mod shell;
-use getkeys_core::{App, commands::Command, model::EnvLine};
+use getkeys_core::{
+    App,
+    commands::Command,
+    model::{CredentialView, EnvLine},
+};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -87,6 +95,79 @@ async fn copy_credential(
     })
     .await
     .map_err(|_| "Clipboard worker failed".to_owned())?
+}
+/// Bumped to stop the key capture in progress.
+static CAPTURE: AtomicU64 = AtomicU64::new(0);
+fn with_core<T>(core: &Core, f: impl FnOnce(&App) -> anyhow::Result<T>) -> Result<T, String> {
+    let guard = core
+        .lock()
+        .map_err(|_| "Application state is unavailable".to_owned())?;
+    f(guard.as_ref().map_err(Clone::clone)?).map_err(message)
+}
+/// Opens the provider's page for making a key, filled in, and waits for the person to copy the
+/// new key there. It is checked and saved without passing through the window, then cleared from
+/// the clipboard. Returns nothing when cancelled or after 15 minutes.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn capture_key(
+    state: tauri::State<'_, Core>,
+    plugin_id: String,
+    connection_id: Option<String>,
+    resource: String,
+    name: String,
+    group: Option<String>,
+    replaces: Option<String>,
+) -> Result<Option<CredentialView>, String> {
+    let core = state.inner().clone();
+    let generation = CAPTURE.fetch_add(1, Ordering::SeqCst) + 1;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut clipboard = arboard::Clipboard::new().map_err(|_| "Clipboard is unavailable")?;
+        let before = clipboard.get_text().unwrap_or_default();
+        with_core(&core, |app| {
+            app.dispatch(Command::OpenKeyPage {
+                plugin_id: plugin_id.clone(),
+                connection_id: connection_id.clone(),
+                resource: resource.clone(),
+                name: name.clone(),
+            })
+        })?;
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(15 * 60) {
+            std::thread::sleep(Duration::from_millis(700));
+            if CAPTURE.load(Ordering::SeqCst) != generation {
+                return Ok(None);
+            }
+            let Ok(text) = clipboard.get_text() else {
+                continue;
+            };
+            if text == before || !with_core(&core, |app| Ok(app.looks_like_key(&plugin_id, &text)))?
+            {
+                continue;
+            }
+            let saved = with_core(&core, |app| {
+                app.save_captured(
+                    &plugin_id,
+                    connection_id.as_deref(),
+                    &resource,
+                    &name,
+                    &text,
+                    group.as_deref(),
+                    replaces.as_deref(),
+                )
+            })?;
+            if clipboard.get_text().is_ok_and(|now| now == text) {
+                let _ = clipboard.clear();
+            }
+            return Ok(Some(saved));
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|_| "Capture worker failed".to_owned())?
+}
+#[tauri::command]
+fn cancel_capture() {
+    CAPTURE.fetch_add(1, Ordering::SeqCst);
 }
 /// Writes the chosen keys as a `.env` file, or copies them. The values never reach the window.
 /// Returns false when the person closes the save dialog.
@@ -190,6 +271,8 @@ fn main() {
             request,
             copy_credential,
             export_env,
+            capture_key,
+            cancel_capture,
             shell::shell_ready
         ])
         .run(context)

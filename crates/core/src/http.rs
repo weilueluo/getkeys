@@ -95,6 +95,19 @@ impl Transport {
                         .context("Secret payload must be a JSON object")?;
                     object.insert(field, secret.into());
                 }
+                SecretInjection::JsonArray { field } => {
+                    let object = input
+                        .body
+                        .get_or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .context("Secret payload must be a JSON object")?;
+                    object
+                        .entry(field)
+                        .or_insert_with(|| serde_json::json!([]))
+                        .as_array_mut()
+                        .context("Secret list must be a JSON array")?
+                        .push(secret.into());
+                }
                 SecretInjection::SealedBox { public_key, key_id } => {
                     let key: [u8; 32] = STANDARD
                         .decode(public_key)?

@@ -1,8 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { copyCredential, exportEnv, request } from './bridge';
+import { captureKey, copyCredential, exportEnv, request } from './bridge';
 import { waiting } from './NewKey';
+import { NO_PERMISSION } from './secrets';
 import { connectedSnapshot, emptySnapshot } from '../../../tests/fixtures';
 import type {
   AuthProgress,
@@ -18,6 +19,8 @@ vi.mock('./bridge', () => ({
   request: vi.fn(),
   copyCredential: vi.fn().mockResolvedValue(undefined),
   exportEnv: vi.fn().mockResolvedValue(true),
+  captureKey: vi.fn(),
+  cancelCapture: vi.fn().mockResolvedValue(undefined),
 }));
 let snapshot: Snapshot;
 let found: Discovery[];
@@ -51,6 +54,7 @@ const key = (c: Partial<CredentialView>): CredentialView => ({
   plugin_id: '',
   connection_id: 'connection',
   provider_id: 'key',
+  origin: 'listed',
   name: 'Key',
   credential_type: 'access_token',
   resource: '',
@@ -274,6 +278,12 @@ beforeEach(() => {
       snapshot.plugins.find((p) => p.manifest.id === command.plugin_id)!.installed = false;
       return null;
     }
+    if (command.kind === 'rotate_now') {
+      const old = snapshot.credentials.find((c) => c.id === command.credential_id)!;
+      const fresh = { ...old, id: `${old.id}-new`, origin: 'rotated' };
+      snapshot.credentials = snapshot.credentials.map((c) => (c === old ? fresh : c));
+      return fresh;
+    }
     if (command.kind === 'check' || command.kind === 'open_vault_folder') return null;
     throw new Error(`Unhandled test command: ${command.kind}`);
   });
@@ -348,9 +358,9 @@ describe('GetKeys workflows', () => {
     render(<App />);
     fireEvent.click(within(await card('GitHub')).getByRole('button', { name: 'Add' }));
     const dialog = await screen.findByRole('dialog', { name: 'Connect GitHub' });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent(
-      'The GitHub sign-in on this device didn’t work (Error: Bad credentials)',
-    );
+    // Why the sign-in didn't work goes to the log, not the screen.
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Bad credentials/)).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: /Open GitHub tokens/ }));
     fireEvent.change(within(dialog).getByLabelText('Token'), {
       target: { value: 'fixture-token' },
@@ -386,10 +396,12 @@ describe('GetKeys workflows', () => {
     const key = await item('Production API');
     expect(key).toHaveTextContent('Supabase · GetKeys');
     expect(key).toHaveTextContent('••••');
-    for (const action of ['Reveal', 'Copy', 'Rotate', 'Delete'])
+    for (const action of ['Reveal', 'Copy', 'Delete'])
       expect(
         within(key).getByRole('button', { name: `${action} Production API` }),
       ).toBeInTheDocument();
+    // Rotating is rare, so it waits in the details, after Copy .env.
+    expect(within(key).queryByRole('button', { name: 'Rotate Production API' })).toBeNull();
     expect(screen.queryByText(/Stored/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Import/ })).not.toBeInTheDocument();
     await enabled(within(key).getByRole('button', { name: 'Copy Production API' }));
@@ -399,6 +411,11 @@ describe('GetKeys workflows', () => {
       within(details).getByText('https://abcdefghijklmnopqrst.supabase.co'),
     ).toBeInTheDocument();
     await enabled(within(details).getByRole('button', { name: 'Copy Project URL' }));
+    const actions = within(details).getAllByRole('button', { name: /Copy \.env|Rotate/ });
+    expect(actions.map((b) => b.textContent?.trim())).toEqual(['Copy .env', 'Rotate']);
+    expect(
+      within(details).getByText('Listed by Supabase in Personal projects'),
+    ).toBeInTheDocument();
     await enabled(within(details).getByRole('button', { name: /Copy \.env/ }));
     await waitFor(() =>
       expect(vi.mocked(copyCredential).mock.calls).toEqual([
@@ -414,7 +431,9 @@ describe('GetKeys workflows', () => {
     render(<App />);
     const cli = await item('Supabase CLI');
     expect(cli).toHaveTextContent('Supabase · Personal projects');
-    await enabled(within(cli).getByRole('button', { name: 'Rotate Supabase CLI' }));
+    const details = await expand('Supabase CLI');
+    expect(within(details).getByText('Found on this device, in Supabase CLI')).toBeInTheDocument();
+    await enabled(within(details).getByRole('button', { name: 'Rotate Supabase CLI' }));
     let dialog = await screen.findByRole('dialog', { name: 'Rotate Supabase CLI' });
     await enabled(within(dialog).getByRole('button', { name: /Open Supabase/ }));
     expect(commands()).toContainEqual({ kind: 'open_token_page', plugin_id: 'official.supabase' });
@@ -432,9 +451,10 @@ describe('GetKeys workflows', () => {
     render(<App />);
     await item('Production API');
     expect(screen.queryByRole('button', { name: 'Details for deploy-bot' })).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: /Empty profiles/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Others/ }));
     const row = await item('deploy-bot');
     expect(row).toHaveTextContent('Vercel · luo');
+    expect(row).toHaveTextContent('No secret on this device');
     expect(within(row).getByRole('button', { name: 'Fill in deploy-bot' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Details for Production API' })).toBeNull();
   });
@@ -542,15 +562,14 @@ describe('GetKeys workflows', () => {
     expect(within(dialog).queryByLabelText('Name')).toBeNull();
 
     fireEvent.click(within(providers).getByRole('button', { name: /^Supabase/ }));
-    const account = within(dialog).getByRole('group', { name: 'Account' });
-    expect(within(dialog).queryByRole('group', { name: 'Project' })).toBeNull();
-    fireEvent.click(within(account).getByRole('button', { name: /^Personal projects/ }));
+    // The only account is picked by itself.
+    expect(within(dialog).queryByRole('group', { name: 'Account' })).toBeNull();
+    expect(dialog).toHaveTextContent('Personal projects');
     const project = await within(dialog).findByRole('group', { name: 'Project' });
+    expect(within(dialog).queryByLabelText('Name')).toBeNull();
     expect(within(project).getByRole('button', { name: /New project/ })).toBeInTheDocument();
     fireEvent.click(within(project).getByRole('button', { name: /^GetKeys/ }));
-    const way = within(dialog).getByRole('group', { name: 'Key' });
-    expect(within(dialog).queryByLabelText('Name')).toBeNull();
-    fireEvent.click(within(way).getByRole('button', { name: /Create a new key/ }));
+    // Supabase makes the key, so there's nothing to paste.
     expect(within(dialog).queryByLabelText('API key')).toBeNull();
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Staging' } });
     await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
@@ -569,11 +588,10 @@ describe('GetKeys workflows', () => {
     await enabled(await screen.findByRole('button', { name: 'New key' }));
     const dialog = screen.getByRole('dialog', { name: 'New key' });
     fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
     fireEvent.click(await within(dialog).findByRole('button', { name: /^GetKeys/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Change key' }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /Paste a key/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change project' }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /^GetKeys/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Already have a key\? Paste it/ }));
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Staging' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), {
       target: { value: 'fixture-new-key' },
@@ -590,26 +608,60 @@ describe('GetKeys workflows', () => {
       },
     });
   });
-  it('keeps a pasted key on its own when no account is chosen', async () => {
+  it('makes a key on the provider page when there is no account, and picks it up', async () => {
     snapshot = connectedSnapshot();
+    snapshot.plugins[0].installed = true;
+    const made = key({
+      id: 'captured',
+      plugin_id: 'official.github',
+      name: 'CI',
+      origin: 'captured',
+    });
+    vi.mocked(captureKey).mockImplementation(async () => {
+      snapshot.credentials.push({ ...made, connection_id: '', value_available: true });
+      return made;
+    });
     render(<App />);
     await enabled(await screen.findByRole('button', { name: 'New key' }));
     const dialog = screen.getByRole('dialog', { name: 'New key' });
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^No account/ }));
-    // A key without an account can only be pasted, so that step is skipped.
-    expect(within(dialog).queryByRole('group', { name: 'Project' })).toBeNull();
-    expect(within(dialog).queryByRole('group', { name: 'Key' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: /^GitHub/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Make it on github.com instead' }));
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'CI' } });
+    // Nothing to paste: GitHub's page makes the key and GetKeys picks it up.
+    expect(within(dialog).queryByLabelText('Personal access token')).toBeNull();
+    await enabled(within(dialog).getByRole('button', { name: /Make it on GitHub/ }));
+    expect(await screen.findByText('Saved CI')).toBeInTheDocument();
+    expect(captureKey).toHaveBeenCalledWith({
+      pluginId: 'official.github',
+      connectionId: null,
+      resource: '',
+      name: 'CI',
+      group: null,
+      replaces: null,
+    });
+    expect(screen.queryByRole('dialog', { name: 'New key' })).toBeNull();
+  });
+  it('keeps a pasted key on its own as a fallback', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.plugins[0].installed = true;
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^GitHub/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Make it on github.com instead' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Already have a key\? Paste it/ }));
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Mine' } });
-    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'sb_secret' } });
+    fireEvent.change(within(dialog).getByLabelText('Personal access token'), {
+      target: { value: 'ghp_secret' },
+    });
     await enabled(within(dialog).getByRole('button', { name: 'Save key' }));
     await waitFor(() =>
       expect(commands()).toContainEqual({
         kind: 'save_key',
         credential_id: null,
-        plugin_id: 'official.supabase',
+        plugin_id: 'official.github',
         name: 'Mine',
-        fields: { token: 'sb_secret' },
+        fields: { token: 'ghp_secret' },
       }),
     );
   });
@@ -619,7 +671,6 @@ describe('GetKeys workflows', () => {
     await enabled(await screen.findByRole('button', { name: 'New key' }));
     const dialog = screen.getByRole('dialog', { name: 'New key' });
     fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
     fireEvent.click(await within(dialog).findByRole('button', { name: /New project/ }));
     const form = within(dialog).getByRole('form', { name: 'New project' });
     fireEvent.change(within(form).getByLabelText('Project name'), {
@@ -640,7 +691,6 @@ describe('GetKeys workflows', () => {
     });
     // The new project is chosen, and the cascade moves on to the key.
     expect(within(dialog).getByText('my-app')).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'App server' } });
     await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
     await waitFor(() =>
@@ -674,9 +724,7 @@ describe('GetKeys workflows', () => {
     const dialog = screen.getByRole('dialog', { name: 'New key' });
     expect(dialog).toHaveTextContent('It joins backend.');
     fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
     fireEvent.click(await within(dialog).findByRole('button', { name: /^GetKeys/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Worker' } });
     await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
     await waitFor(() =>
@@ -841,12 +889,12 @@ describe('GetKeys workflows', () => {
   });
   it('filters the keys in the tab being viewed, apart from search', async () => {
     snapshot = connectedSnapshot();
-    snapshot.credentials[0].problem = 'Rejected by the provider.';
+    snapshot.credentials[0].problem = NO_PERMISSION;
     render(<App />);
     expect(await screen.findByPlaceholderText('Search keys')).toBeInTheDocument();
     await item('Supabase CLI');
     fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Invalid' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Not checked' }));
     expect(screen.queryByRole('button', { name: 'Details for Supabase CLI' })).toBeNull();
     expect(await item('Production API')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Filter' })).toHaveTextContent('1');
@@ -889,6 +937,71 @@ describe('GetKeys workflows', () => {
     );
     await waitFor(() => expect(screen.queryByRole('tab', { name: /^backend/ })).toBeNull());
   });
+  it('rotates a key in one step: the provider makes the new one and the old one goes', async () => {
+    snapshot = connectedSnapshot();
+    render(<App />);
+    const details = await expand('Production API');
+    await enabled(within(details).getByRole('button', { name: 'Rotate Production API' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rotate Production API?' });
+    expect(dialog).toHaveTextContent('Supabase makes a new key in its place');
+    await enabled(within(dialog).getByRole('button', { name: 'Rotate' }));
+    expect(await screen.findByText('Key rotated')).toBeInTheDocument();
+    expect(commands()).toContainEqual({ kind: 'rotate_now', credential_id: 'credential' });
+    expect(commands().some((c) => c.kind === 'open_token_page' || c.kind === 'plan_rotation')).toBe(
+      false,
+    );
+    const fresh = await expand('Production API');
+    expect(fresh).toHaveTextContent('Made by GetKeys to replace an older key');
+  });
+  it('rotates a key made on the provider page by picking up the new one', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.plugins[0].installed = true;
+    const old = key({
+      id: 'gh-key',
+      plugin_id: 'official.github',
+      connection_id: '',
+      name: 'CI token',
+      credential_type: 'api_key',
+      origin: 'captured',
+      value_available: true,
+      groups: ['backend'],
+      fields: [
+        {
+          key: 'token',
+          label: 'Token',
+          env: 'GITHUB_TOKEN',
+          secret: true,
+          value: null,
+          available: true,
+        },
+      ],
+    });
+    snapshot.credentials.push(old);
+    vi.mocked(captureKey).mockImplementation(async () => {
+      const made = { ...old, id: 'gh-key-2' };
+      snapshot.credentials.push(made);
+      return made;
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByRole('tab', { name: /^backend/ }));
+    const details = await expand('CI token');
+    expect(details).toHaveTextContent('Made on GitHub’s page');
+    await enabled(within(details).getByRole('button', { name: 'Rotate CI token' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Rotate CI token' });
+    await enabled(within(dialog).getByRole('button', { name: /Make it on GitHub/ }));
+    expect(await screen.findByText('Key rotated')).toBeInTheDocument();
+    expect(captureKey).toHaveBeenCalledWith({
+      pluginId: 'official.github',
+      connectionId: null,
+      resource: '',
+      name: 'CI token',
+      group: null,
+      replaces: 'gh-key',
+    });
+    // The old key is deleted once the new one is kept.
+    expect(commands()).toContainEqual({ kind: 'delete', credential_id: 'gh-key' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
   it('opens a key from anywhere on its row', async () => {
     snapshot = connectedSnapshot();
     render(<App />);
@@ -898,31 +1011,29 @@ describe('GetKeys workflows', () => {
     fireEvent.click(within(row).getByText('Production API'));
     expect(screen.queryByRole('region', { name: 'Production API details' })).toBeNull();
   });
-  it('puts keys the provider won’t list in Failed instead of failing the refresh', async () => {
+  it('keeps a refresh quiet when the provider won’t list some keys', async () => {
     snapshot = connectedSnapshot();
+    // Earlier versions filed refused keys under Failed; Others has taken its place.
+    snapshot.credentials[0].groups = ['Failed', 'backend'];
     listed = () => {
-      throw new Error('forbidden: This connection does not have permission for the operation.');
+      // The host marks the keys it couldn't check, and the listing carries on.
+      snapshot.credentials[0].problem = NO_PERMISSION;
     };
     render(<App />);
     await enabled(await screen.findByRole('button', { name: 'Refresh keys' }));
-    expect(await screen.findByText(/1 moved to Failed/)).toBeInTheDocument();
+    expect(await screen.findByText('Keys are up to date')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByText(/forbidden|permission for the operation/)).toBeNull();
     expect(commands()).toContainEqual({
       kind: 'set_groups',
       credential_id: 'credential',
-      groups: ['Failed'],
+      groups: ['backend'],
     });
-    expect(screen.queryByRole('dialog')).toBeNull();
-    fireEvent.click(await screen.findByRole('tab', { name: /^Failed/ }));
-    expect(await item('Production API')).toBeInTheDocument();
-    listed = () => {};
-    await enabled(screen.getByRole('button', { name: 'Refresh keys' }));
-    await waitFor(() =>
-      expect(commands()).toContainEqual({
-        kind: 'set_groups',
-        credential_id: 'credential',
-        groups: [],
-      }),
-    );
+    expect(screen.queryByRole('tab', { name: /^Failed/ })).toBeNull();
+    // Unchecked keys still work, so they stay ready to use and say why.
+    const details = await expand('Production API');
+    expect(details).toHaveTextContent("This account isn't allowed to list it");
+    expect(screen.queryByRole('tab', { name: /Others/ })).toBeNull();
   });
   it('opens the provider page where keys are made, once the provider is added', async () => {
     snapshot.plugins[0].installed = true;
@@ -936,13 +1047,17 @@ describe('GetKeys workflows', () => {
     );
     expect(screen.queryByRole('button', { name: 'Activity' })).toBeNull();
   });
-  it('marks keys the provider rejected', async () => {
+  it('moves keys the provider rejected to Others, with the reason', async () => {
     snapshot = connectedSnapshot();
     snapshot.credentials[0].problem = 'Rejected by the provider. It was revoked or is wrong.';
     render(<App />);
-    expect(await item('Production API')).toHaveTextContent('Invalid');
-    const details = await expand('Production API');
-    expect(details).toHaveTextContent('Rejected by the provider');
+    await item('Supabase CLI');
+    expect(screen.queryByRole('button', { name: 'Details for Production API' })).toBeNull();
+    fireEvent.click(screen.getByRole('tab', { name: /Others/ }));
+    const row = await item('Production API');
+    expect(row).toHaveTextContent('Rejected by the provider. It was revoked or is wrong.');
+    expect(row).not.toHaveTextContent('Invalid');
+    expect(row.className).not.toMatch(/invalid/);
   });
   it('removes a provider with its accounts from the Providers page', async () => {
     snapshot = connectedSnapshot();

@@ -33,6 +33,13 @@ export function AgentConnect({ busy, perform }: Pick<Controller, 'busy' | 'perfo
     );
     if (status) setAgents(status);
   };
+  const disconnect = async (agent: AgentInfo) => {
+    const status = await perform(
+      () => request<AgentInfo[]>({ kind: 'disconnect_agent', client: agent.client }),
+      `Removed GetKeys from ${agent.name}. Restart it to load the change.`,
+    );
+    if (status) setAgents(status);
+  };
   return (
     <section className="settings-section">
       <div className="settings-label">
@@ -68,13 +75,36 @@ export function AgentConnect({ busy, perform }: Pick<Controller, 'busy' | 'perfo
                 {agent.path}
               </code>
             </div>
-            <button
-              className="button outline"
-              disabled={busy || !prefs?.mcp_enabled}
-              onClick={() => void connect(agent)}
-            >
-              {agent.configured ? 'Reconnect' : 'Connect'}
-            </button>
+            {agent.configured ? (
+              <div className="button-row">
+                <button
+                  className="button ghost"
+                  disabled={busy || !prefs?.mcp_enabled}
+                  title="Write the GetKeys entry again"
+                  aria-label={`Reconnect ${agent.name}`}
+                  onClick={() => void connect(agent)}
+                >
+                  Reconnect
+                </button>
+                <button
+                  className="button outline"
+                  disabled={busy}
+                  aria-label={`Disconnect ${agent.name}`}
+                  onClick={() => void disconnect(agent)}
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : (
+              <button
+                className="button outline"
+                disabled={busy || !prefs?.mcp_enabled}
+                aria-label={`Connect ${agent.name}`}
+                onClick={() => void connect(agent)}
+              >
+                Connect
+              </button>
+            )}
           </div>
         ))}
       </div>

@@ -3,11 +3,11 @@ import {
   ArrowUpRight,
   Check,
   ChevronDown,
-  CircleAlert,
   Copy,
   Download,
   Eye,
   EyeOff,
+  Info,
   ListChecks,
   ListFilter,
   PenLine,
@@ -24,7 +24,6 @@ import type {
   KeyField,
   Manifest,
   PluginView,
-  Rotation,
 } from './types';
 import type { Controller } from './controller';
 import { copyCredential, exportEnv, request } from './bridge';
@@ -41,14 +40,14 @@ import {
   Tabs,
 } from './ui';
 import { formatDay, isFinished, RotationProgress, rotationsFor } from './RotationProgress';
-import { CustomKeyForm, NewKeyDialog } from './NewKey';
+import { CaptureKey, CustomKeyForm, keyPage, NewKeyDialog } from './NewKey';
 import {
   COPIED,
   CUSTOM,
   DOTENV,
-  FAILED,
   listed,
   MASK,
+  NO_PERMISSION,
   primaryField,
   shown,
   SIGN_IN,
@@ -76,9 +75,24 @@ type Item = {
   custom: boolean;
   /** A provider's key kept on its own, outside any account. */
   own: boolean;
+  /** Found, but not usable: its secret isn't here or the provider turned it away. */
+  other: boolean;
+  /** Why a key is in Others, or why it couldn't be checked. */
+  reason?: string;
 };
-/** Keys with a secret, keys without one, or a group's keys (`group:<name>`). */
-type View = 'ready' | 'empty' | `group:${string}`;
+/** Why a key can't be used, if it can't; keys that only couldn't be checked stay usable. */
+function standing(i: Omit<Item, 'other'>): Pick<Item, 'other' | 'reason'> {
+  const problem = i.c.problem ?? undefined;
+  if (problem && problem !== NO_PERMISSION) return { other: true, reason: problem };
+  if (i.secretless)
+    return {
+      other: true,
+      reason: `Its secret isn’t on this device. ${i.provider} shows a secret only once, when it’s made.`,
+    };
+  return { other: false, reason: problem };
+}
+/** Keys ready to use, keys found that can't be used, or a group's keys (`group:<name>`). */
+type View = 'ready' | 'others' | `group:${string}`;
 const GROUPS_KEY = 'getkeys.groups';
 /** Groups made with + that may not have keys yet. */
 const storedGroups = (): string[] => {
@@ -91,10 +105,10 @@ const storedGroups = (): string[] => {
 };
 /** Narrows the keys in the tab being viewed. */
 type Filter = { providers: string[]; states: Status[] };
-type Status = 'invalid' | 'rotating';
+type Status = 'unchecked' | 'rotating';
 const NO_FILTER: Filter = { providers: [], states: [] };
 const STATUSES: { id: Status; label: string }[] = [
-  { id: 'invalid', label: 'Invalid' },
+  { id: 'unchecked', label: 'Not checked' },
   { id: 'rotating', label: 'Rotating' },
 ];
 /** Which keys Refresh covers. */
@@ -132,7 +146,7 @@ export function VaultPanel({
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   const query = search.trim().toLowerCase();
   const all: Item[] = snapshot.credentials
-    .flatMap<Item>((c) => {
+    .flatMap<Omit<Item, 'other'>>((c) => {
       if (!listed(c, snapshot.connections)) return [];
       if (c.credential_type === CUSTOM)
         return [
@@ -191,9 +205,10 @@ export function VaultPanel({
         (a.connection?.name ?? '').localeCompare(b.connection?.name ?? '') ||
         a.place.localeCompare(b.place) ||
         a.c.name.localeCompare(b.c.name),
-    );
-  const groups = [...new Set([...created, ...all.flatMap((i) => i.c.groups)])].sort(
-    (a, b) => Number(b === FAILED) - Number(a === FAILED) || a.localeCompare(b),
+    )
+    .map((i) => ({ ...i, ...standing(i) }));
+  const groups = [...new Set([...created, ...all.flatMap((i) => i.c.groups)])].sort((a, b) =>
+    a.localeCompare(b),
   );
   const searched = all.filter((i) =>
     [
@@ -210,14 +225,14 @@ export function VaultPanel({
   );
   const named = view.startsWith('group:') ? view.slice(6) : '';
   const activeGroup = groups.includes(named) ? named : '';
-  const hasEmpty = all.some((i) => i.secretless);
-  const shown: View = activeGroup ? view : view === 'empty' && hasEmpty ? 'empty' : 'ready';
+  const hasOthers = all.some((i) => i.other);
+  const shown: View = activeGroup ? view : view === 'others' && hasOthers ? 'others' : 'ready';
   const inView = (i: Item, v: View) =>
-    v.startsWith('group:') ? i.c.groups.includes(v.slice(6)) : i.secretless === (v === 'empty');
+    v.startsWith('group:') ? i.c.groups.includes(v.slice(6)) : i.other === (v === 'others');
   const inTab = searched.filter((i) => inView(i, shown));
   const status = (i: Item, s: Status) =>
-    s === 'invalid'
-      ? !!i.c.problem
+    s === 'unchecked'
+      ? i.c.problem === NO_PERMISSION
       : rotationsFor(snapshot, i.c.id).some((r) => r.credential_id === i.c.id && !isFinished(r));
   const filtering = filter.providers.length + filter.states.length;
   const items = inTab.filter(
@@ -239,7 +254,7 @@ export function VaultPanel({
   const exportable = inGroup.filter((i) => !i.secretless && envFields(i.c).length > 0);
   const views: { id: View; label: string }[] = [
     { id: 'ready', label: 'Ready to use' },
-    ...(hasEmpty ? [{ id: 'empty' as const, label: 'Empty profiles' }] : []),
+    ...(hasOthers ? [{ id: 'others' as const, label: 'Others' }] : []),
     ...groups.map((g) => ({ id: `group:${g}` as const, label: g })),
   ];
   const tabs = views.map((t) => ({ ...t, count: searched.filter((i) => inView(i, t.id)).length }));
@@ -286,7 +301,7 @@ export function VaultPanel({
     const item = focus && all.find((i) => i.c.id === focus.id);
     if (!item || focused.current === focus) return;
     focused.current = focus;
-    setView(item.secretless ? 'empty' : 'ready');
+    setView(item.other ? 'others' : 'ready');
     setOpen(item.c.id);
     setTimeout(() =>
       document.querySelector('.key-item.open')?.scrollIntoView?.({ block: 'nearest' }),
@@ -337,7 +352,9 @@ export function VaultPanel({
   if (!active.length && !all.length)
     return (
       <>
-        <PageHeader title="Keys" />
+        <PageHeader title="Keys" search={searchField}>
+          {newKey}
+        </PageHeader>
         <Empty
           title="No keys yet"
           action={
@@ -359,8 +376,7 @@ export function VaultPanel({
     );
   return (
     <>
-      <PageHeader title="Keys">
-        {searchField}
+      <PageHeader title="Keys" search={searchField}>
         <div className="button-group" role="group" aria-label="All keys">
           <button
             className="button outline"
@@ -499,16 +515,10 @@ export function VaultPanel({
           )}
         </div>
       </div>
-      {shown === 'empty' && (
+      {shown === 'others' && (
         <p className="tab-note">
-          These profiles exist in your accounts, but their providers show a secret only once, when
-          it’s created. Fill one in if you have it, rotate it for a fresh one, or delete it.
-        </p>
-      )}
-      {activeGroup === FAILED && (
-        <p className="tab-note">
-          The provider refused these keys during the last refresh: the account can’t list them, or
-          the key was rejected. They leave this group once a refresh gets through.
+          GetKeys found these keys but can’t use them, and each says why. Rotate one for a fresh
+          key, fill in its secret if you have it, or delete it.
         </p>
       )}
       {items.length ? (
@@ -747,6 +757,58 @@ function GroupDialog({
   );
 }
 
+/**
+ * How a key gets replaced: the provider makes the new one (`auto`), GetKeys picks up a key
+ * made on the provider's page (`capture`), the person edits a custom key's values (`edit`), or
+ * a key found on this device changes where it lives (`local`).
+ */
+function rotateWay({ c, connection, manifest, custom, local }: Item) {
+  if (custom) return 'edit' as const;
+  if (!manifest) return undefined;
+  if (local) return 'local' as const;
+  const ops = manifest.operations;
+  if (
+    connection &&
+    (ops.includes('rotate_credential') ||
+      (c.can_rotate && ops.includes('create_credential') && ops.includes('revoke_credential')))
+  )
+    return 'auto' as const;
+  if (keyPage(manifest) && inputs(manifest.credential_fields).length > 0) return 'capture' as const;
+  return undefined;
+}
+
+/** Where a key came from, in a few words. */
+function sourceOf({ c, connection, provider }: Item) {
+  const from = c.id.startsWith('found:') ? c.id.slice(6) : connection?.source;
+  const where = !from
+    ? ''
+    : from.startsWith('env:') && from !== 'env:AWS'
+      ? `$${from.slice(4)}`
+      : from.startsWith('aws_profile:')
+        ? `the ${from.slice(12)} AWS profile`
+        : from === 'gh' || from.startsWith('gh:')
+          ? 'GitHub CLI'
+          : '';
+  switch (c.origin) {
+    case 'created':
+      return 'Made by GetKeys';
+    case 'rotated':
+      return 'Made by GetKeys to replace an older key';
+    case 'captured':
+      return `Made on ${provider}’s page`;
+    case 'pasted':
+      return 'Added by you';
+    case 'listed':
+      return connection ? `Listed by ${provider} in ${connection.name}` : `Listed by ${provider}`;
+    case 'signed_in':
+      return `Signed in to ${provider} in the browser`;
+    case 'found':
+      return `Found on this device, in ${where || c.name}`;
+    default:
+      return 'Added by you';
+  }
+}
+
 function KeyItem({
   item,
   control,
@@ -769,31 +831,15 @@ function KeyItem({
   groups: string[];
   openGroup: (group: string) => void;
 }) {
-  const { c, connection, manifest, provider, place, secretless, local, custom } = item;
+  const { c, connection, provider, place, secretless, local, custom } = item;
   const { busy, perform, snapshot } = control;
   const [secret, reveal] = useReveal(c.id, perform);
-  const [dialog, setDialog] = useState<'rotate' | 'guided' | 'native' | 'paste' | 'delete'>();
+  const [dialog, setDialog] = useState<'rotate' | 'delete'>();
   const primary = primaryField(c);
   const value = primary && shown(primary, secret);
   const hidden = c.fields.some((f) => f.secret && f.available);
   const rotation = rotationsFor(snapshot, c.id).find((r) => !isFinished(r));
-  const guided = !!manifest?.operations.includes('guide');
-  const native = !!connection && !!manifest?.operations.includes('rotate_credential');
-  // Without a way to rotate through the provider, its page opens and the new value is pasted.
-  const pastes = !!manifest?.token_page && inputs(manifest.credential_fields).length > 0;
-  const rotate = rotation
-    ? expand
-    : custom
-      ? edit
-      : c.can_rotate || local
-        ? () => setDialog('rotate')
-        : native
-          ? () => setDialog('native')
-          : guided
-            ? () => setDialog('guided')
-            : pastes
-              ? () => setDialog('paste')
-              : undefined;
+  const rotate = rotation || connection?.state === 'disconnected' ? undefined : rotateWay(item);
   const copy = (f: KeyField) =>
     void perform(
       () => copyCredential(c.id, f.key),
@@ -801,7 +847,7 @@ function KeyItem({
     );
   const close = () => setDialog(undefined);
   return (
-    <li className={`key-item ${open ? 'open' : ''} ${c.problem ? 'invalid' : ''}`}>
+    <li className={`key-item ${open ? 'open' : ''}`}>
       <div
         className="key-line"
         onClick={(e) => {
@@ -815,11 +861,6 @@ function KeyItem({
           <span className="key-title">
             <strong>{c.name}</strong>
             {rotation && <span className="badge active">Rotating</span>}
-            {c.problem && (
-              <span className="badge invalid" title={c.problem}>
-                <CircleAlert size={11} strokeWidth={2.25} /> Invalid
-              </span>
-            )}
           </span>
           <small>
             {custom ? provider : `${provider} · ${place}`}
@@ -830,8 +871,10 @@ function KeyItem({
             ))}
           </small>
         </div>
-        {secretless ? (
-          <span className="key-value missing">No secret on this device</span>
+        {item.other ? (
+          <span className="key-value missing" title={item.reason}>
+            {secretless ? 'No secret on this device' : item.reason}
+          </span>
         ) : (
           <code
             className={`key-value ${primary && value === undefined ? 'masked' : ''}`}
@@ -873,21 +916,6 @@ function KeyItem({
             </>
           )}
           <button
-            className="icon-button outline"
-            title={
-              rotation
-                ? 'Rotation in progress'
-                : rotate
-                  ? 'Rotate'
-                  : `${provider} can’t rotate this key`
-            }
-            aria-label={`Rotate ${c.name}`}
-            disabled={busy || connection?.state === 'disconnected' || !rotate}
-            onClick={rotate}
-          >
-            <RotateCw size={15} strokeWidth={1.75} />
-          </button>
-          <button
             className="icon-button outline danger"
             title={rotation ? 'Finish the rotation first' : 'Delete'}
             aria-label={`Delete ${c.name}`}
@@ -915,6 +943,14 @@ function KeyItem({
           copy={copy}
           groups={groups}
           openGroup={openGroup}
+          rotate={
+            rotate &&
+            (() => {
+              if (rotate === 'edit') edit();
+              else setDialog('rotate');
+            })
+          }
+          rotating={!!rotation}
         />
       )}
       {dialog && local ? (
@@ -927,14 +963,12 @@ function KeyItem({
         />
       ) : (
         <>
-          {dialog === 'rotate' && (
+          {dialog === 'rotate' && rotate === 'auto' && (
             <RotateDialog {...control} item={item} close={close} done={expand} />
           )}
-          {dialog === 'guided' && (
-            <GuidedDialog {...control} item={item} close={close} done={expand} />
+          {dialog === 'rotate' && rotate === 'capture' && (
+            <CaptureRotateDialog {...control} item={item} close={close} />
           )}
-          {dialog === 'native' && <NativeRotateDialog {...control} item={item} close={close} />}
-          {dialog === 'paste' && <PasteRotateDialog {...control} item={item} close={close} />}
           {dialog === 'delete' && <DeleteDialog {...control} item={item} close={close} />}
         </>
       )}
@@ -948,6 +982,8 @@ function KeyDetails({
   copy,
   groups,
   openGroup,
+  rotate,
+  rotating,
   ...control
 }: Controller & {
   item: Item;
@@ -955,6 +991,9 @@ function KeyDetails({
   copy: (f: KeyField) => void;
   groups: string[];
   openGroup: (group: string) => void;
+  /** Replaces the key, if it can be replaced. */
+  rotate?: () => void;
+  rotating: boolean;
 }) {
   const { c: credential, connection, custom, own } = item;
   const { busy, perform, snapshot } = control;
@@ -962,12 +1001,13 @@ function KeyDetails({
   const active = rotations.find((r) => !isFinished(r));
   const last = rotations.find(isFinished);
   const exported = credential.fields.filter((f) => f.env && f.available).length;
+  const copiesEnv = credential.value_available && exported > 0;
   return (
     <div className="key-details" role="region" aria-label={`${credential.name} details`}>
       <div className="key-details-main">
-        {credential.problem && (
-          <p className="callout danger">
-            <CircleAlert size={14} strokeWidth={2} /> {credential.problem}
+        {item.reason && !item.secretless && (
+          <p className="callout">
+            <Info size={14} strokeWidth={2} /> {item.reason}
           </p>
         )}
         <dl className="key-fields">
@@ -1001,21 +1041,34 @@ function KeyDetails({
             );
           })}
         </dl>
-        {credential.value_available && exported > 0 && (
+        {(copiesEnv || rotate) && (
           <div className="key-actions">
-            <button
-              className="button outline small"
-              disabled={busy}
-              title="Copy as environment variables. Clipboard clears in 30 seconds."
-              onClick={() =>
-                void perform(
-                  () => copyCredential(credential.id, DOTENV),
-                  `Copied ${plural(exported, 'variable')} as .env. Clipboard clears in 30 seconds.`,
-                )
-              }
-            >
-              <SquareTerminal size={14} /> Copy .env
-            </button>
+            {copiesEnv && (
+              <button
+                className="button outline small"
+                disabled={busy}
+                title="Copy as environment variables. Clipboard clears in 30 seconds."
+                onClick={() =>
+                  void perform(
+                    () => copyCredential(credential.id, DOTENV),
+                    `Copied ${plural(exported, 'variable')} as .env. Clipboard clears in 30 seconds.`,
+                  )
+                }
+              >
+                <SquareTerminal size={14} /> Copy .env
+              </button>
+            )}
+            {rotate && (
+              <button
+                className="button outline small"
+                disabled={busy || rotating}
+                title={rotating ? 'Rotation in progress' : 'Replace this key with a new one'}
+                aria-label={`Rotate ${credential.name}`}
+                onClick={rotate}
+              >
+                <RotateCw size={14} strokeWidth={1.75} /> Rotate
+              </button>
+            )}
           </div>
         )}
         {active && <RotationProgress {...control} rotation={active} />}
@@ -1033,6 +1086,8 @@ function KeyDetails({
               ? `${item.provider}, kept on its own`
               : (connection?.name ?? 'None, added by hand')}
           </dd>
+          <dt>Source</dt>
+          <dd>{sourceOf(item)}</dd>
           {credential.resource && (
             <>
               <dt>Belongs to</dt>
@@ -1154,118 +1209,79 @@ function GroupEditor({
 
 type DialogProps = Controller & { item: Item; close: () => void; done?: () => void };
 
+/** Has the provider make a new key, then retires this one: the provider's own roll if it has
+ * one, else a new key and the old one revoked. */
 function RotateDialog({ item, close, done, busy, perform }: DialogProps) {
-  const { c } = item;
+  const { c, provider } = item;
   return (
-    <Modal title={`Rotate ${c.name}`} onClose={close}>
+    <Modal title={`Rotate ${c.name}?`} onClose={close}>
       <p>
-        GetKeys creates a replacement and keeps this key working until you’ve swapped the new one in
-        wherever you use it. Then it retires this one.
+        {provider} makes a new key in its place and the old value stops working. The new key keeps
+        this one’s name and groups; copy it to wherever you use it.
       </p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const name = String(new FormData(e.currentTarget).get('name'));
-          void perform(() =>
-            request<Rotation>({ kind: 'plan_rotation', credential_id: c.id, name }),
-          ).then((r) => {
-            if (!r) return;
-            close();
-            done?.();
-          });
-        }}
-      >
-        <Field label="Replacement name">
-          <input name="name" defaultValue={`${c.name} replacement`} required />
-        </Field>
-        <div className="modal-footer">
-          <button type="button" className="button outline" onClick={close}>
-            Cancel
-          </button>
-          <button className="button" disabled={busy}>
-            Review rotation plan
-          </button>
-        </div>
-      </form>
+      <div className="modal-footer">
+        <button type="button" className="button outline" onClick={close}>
+          Cancel
+        </button>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={() =>
+            void perform(
+              () => request<CredentialView>({ kind: 'rotate_now', credential_id: c.id }),
+              'Key rotated',
+            ).then((r) => {
+              if (!r) return;
+              close();
+              done?.();
+            })
+          }
+        >
+          <RotateCw size={14} strokeWidth={1.75} /> Rotate
+        </button>
+      </div>
     </Modal>
   );
 }
 
-function GuidedDialog({ item, close, done, snapshot, busy, perform }: DialogProps) {
-  const { c: credential } = item;
+/**
+ * For providers that make keys only on their own page: GetKeys opens it, picks up the new key
+ * and deletes the old one. Pasting is there in case the pick-up doesn't work.
+ */
+function CaptureRotateDialog(props: DialogProps) {
+  const { item, close, busy, perform } = props;
+  const { c, provider } = item;
   const manifest = item.manifest!;
-  const [message, setMessage] = useState('');
+  const [step, setStep] = useState<'capture' | 'paste' | 'retire'>('capture');
+  const retire = () =>
+    void perform(
+      () => request<Deletion>({ kind: 'delete', credential_id: c.id }),
+      (r) => (r.kind === 'deleted' ? 'Key rotated' : undefined),
+    ).then((r) => {
+      if (r?.kind === 'manual') setStep('retire');
+      else close();
+    });
+  if (step === 'retire') return <ManualDelete {...props} />;
+  if (step === 'paste') return <PasteRotateDialog {...props} />;
   return (
-    <Modal title={`Replace ${credential.name}`} onClose={close}>
+    <Modal title={`Rotate ${c.name}`} onClose={close}>
       <p>
-        Create a replacement in {manifest.name} with the access you need, add it with New key, then
-        choose it here. GetKeys retires this key once you’ve swapped the new one in.
+        GetKeys opens {provider} to make the new key, keeps it in place of this one, then deletes
+        this one.
       </p>
-      <button
-        className="button outline full"
-        disabled={busy}
-        onClick={() =>
-          void perform(() =>
-            request<string>({
-              kind: 'guide',
-              connection_id: credential.connection_id,
-              resource: credential.resource,
-            }),
-          ).then((m) => {
-            if (m) setMessage(m);
-          })
-        }
-      >
-        Open {manifest.name} <ArrowUpRight size={14} />
+      <CaptureKey
+        manifest={manifest}
+        connectionId={c.connection_id || undefined}
+        resource={c.resource}
+        name={c.name}
+        replaces={c.id}
+        busy={busy}
+        perform={perform}
+        done={retire}
+      />
+      <button type="button" className="text-button" onClick={() => setStep('paste')}>
+        Already made it? Paste it
       </button>
-      {message && <p className="callout">{message}</p>}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const replacementId = String(new FormData(e.currentTarget).get('replacement'));
-          void perform(() =>
-            request<Rotation>({
-              kind: 'plan_replacement',
-              credential_id: credential.id,
-              replacement_id: replacementId,
-            }),
-          ).then((r) => {
-            if (!r) return;
-            close();
-            done?.();
-          });
-        }}
-      >
-        <Field label="Replacement key">
-          <select name="replacement" required defaultValue="">
-            <option value="" disabled>
-              Choose a different saved key
-            </option>
-            {snapshot.credentials
-              .filter(
-                (c) =>
-                  c.id !== credential.id &&
-                  c.connection_id === credential.connection_id &&
-                  c.resource === credential.resource &&
-                  c.value_available &&
-                  !c.retired,
-              )
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </select>
-        </Field>
-        <div className="modal-footer">
-          <button type="button" className="button outline" onClick={close}>
-            Cancel
-          </button>
-          <button className="button" disabled={busy}>
-            Use this replacement
-          </button>
-        </div>
-      </form>
     </Modal>
   );
 }
@@ -1343,38 +1359,6 @@ function LocalKeyDialog({
   );
 }
 
-/** Has the provider replace the key with a new one in a single step. */
-function NativeRotateDialog({ item, close, busy, perform }: DialogProps) {
-  const { c, manifest } = item;
-  return (
-    <Modal title={`Rotate ${c.name}?`} onClose={close}>
-      <p>
-        {manifest?.name} replaces this key with a new one and the old value stops working right
-        away. Update anything that uses it with the new value.
-      </p>
-      <div className="modal-footer">
-        <button type="button" className="button outline" onClick={close}>
-          Cancel
-        </button>
-        <button
-          className="button"
-          disabled={busy}
-          onClick={() =>
-            void perform(
-              () => request<CredentialView>({ kind: 'rotate_now', credential_id: c.id }),
-              'Key rotated',
-            ).then((r) => {
-              if (r) close();
-            })
-          }
-        >
-          <RotateCw size={14} strokeWidth={1.75} /> Rotate
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
 /** Opens the provider's page to make a new key, then takes its value in place of the old one. */
 function PasteRotateDialog({ item, close, busy, perform }: DialogProps) {
   const { c } = item;
@@ -1383,8 +1367,8 @@ function PasteRotateDialog({ item, close, busy, perform }: DialogProps) {
   return (
     <Modal title={`Rotate ${c.name}`} onClose={close}>
       <p>
-        Create a new key in {manifest.name} and paste it here. GetKeys checks it, then keeps it in
-        place of the old one. Delete the old key in {manifest.name} once nothing uses it.
+        Paste the new key. GetKeys checks it, then keeps it in place of the old one. Delete the old
+        key in {manifest.name} once nothing uses it.
       </p>
       <button
         type="button"
@@ -1457,42 +1441,10 @@ function DeleteDialog({ item, close, busy, perform }: DialogProps) {
   const [manual, setManual] = useState(false);
   const revokes =
     !!manifest &&
-    !c.provider_id.startsWith('import-') &&
+    (manifest.revoke_by_value || !c.provider_id.startsWith('import-')) &&
     manifest.operations.includes('revoke_credential');
   if (manual && manifest)
-    return (
-      <Modal title={`Delete ${c.name} in ${manifest.name}`} onClose={close}>
-        <p>
-          {manifest.name} doesn’t let apps delete this key, so it’s open in your browser. Delete it
-          there, then come back and press Done.
-        </p>
-        <div className="modal-footer">
-          <button
-            className="button outline"
-            disabled={busy}
-            onClick={() =>
-              void perform(() => request({ kind: 'open_token_page', plugin_id: manifest.id }))
-            }
-          >
-            Open {manifest.name} <ArrowUpRight size={14} />
-          </button>
-          <button
-            className="button"
-            disabled={busy}
-            onClick={() =>
-              void perform(
-                () => request({ kind: 'confirm_deleted', credential_id: c.id }),
-                'Key deleted',
-              ).then((r) => {
-                if (r !== undefined) close();
-              })
-            }
-          >
-            <Check size={14} /> Done
-          </button>
-        </div>
-      </Modal>
-    );
+    return <ManualDelete item={item} close={close} busy={busy} perform={perform} />;
   return (
     <Modal title={`Delete ${c.name}?`} onClose={close}>
       <p>
@@ -1520,6 +1472,45 @@ function DeleteDialog({ item, close, busy, perform }: DialogProps) {
           }
         >
           <Trash2 size={14} strokeWidth={1.75} /> Delete key
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/** The provider deletes this key only on its own page, which GetKeys has opened. */
+function ManualDelete({ item, close, busy, perform }: Omit<DialogProps, 'snapshot'>) {
+  const { c } = item;
+  const manifest = item.manifest!;
+  return (
+    <Modal title={`Delete ${c.name} in ${manifest.name}`} onClose={close}>
+      <p>
+        {manifest.name} deletes keys only on its own page, so GetKeys opened it. Delete the old key
+        there, then press Done.
+      </p>
+      <div className="modal-footer">
+        <button
+          className="button outline"
+          disabled={busy}
+          onClick={() =>
+            void perform(() => request({ kind: 'open_token_page', plugin_id: manifest.id }))
+          }
+        >
+          Open {manifest.name} <ArrowUpRight size={14} />
+        </button>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={() =>
+            void perform(
+              () => request({ kind: 'confirm_deleted', credential_id: c.id }),
+              'Key deleted',
+            ).then((r) => {
+              if (r !== undefined) close();
+            })
+          }
+        >
+          <Check size={14} /> Done
         </button>
       </div>
     </Modal>

@@ -110,6 +110,28 @@ pub struct CredentialView {
     /// The provider of a key held on its own, outside any account; empty otherwise.
     #[serde(default)]
     pub plugin_id: String,
+    /// How GetKeys got the key: one of the [`origin`] values, or empty when saved by an
+    /// earlier version.
+    #[serde(default)]
+    pub origin: String,
+}
+
+/// Values of [`CredentialView::origin`].
+pub mod origin {
+    /// The provider made it through its API when asked.
+    pub const CREATED: &str = "created";
+    /// The provider made it to replace an older key.
+    pub const ROTATED: &str = "rotated";
+    /// Made on the provider's page and picked up from the clipboard.
+    pub const CAPTURED: &str = "captured";
+    /// Typed or pasted in.
+    pub const PASTED: &str = "pasted";
+    /// Listed by the provider from a connected account.
+    pub const LISTED: &str = "listed";
+    /// Found on this device, such as in a CLI's config or an environment variable.
+    pub const FOUND: &str = "found";
+    /// The token an account got by signing in through the browser.
+    pub const SIGNED_IN: &str = "signed_in";
 }
 
 /// One labelled part of a key, such as an access key ID, secret, region, or account ID.

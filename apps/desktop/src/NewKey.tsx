@@ -1,8 +1,16 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpRight, ChevronRight, Lock, LockOpen, Plus, X } from 'lucide-react';
-import type { Created, CredentialView, NewResource, Owner, PluginView, Resource } from './types';
+import type {
+  Created,
+  CredentialView,
+  Manifest,
+  NewResource,
+  Owner,
+  PluginView,
+  Resource,
+} from './types';
 import type { Controller } from './controller';
-import { request } from './bridge';
+import { cancelCapture, captureKey, request } from './bridge';
 import { Field, inputs, Modal, ProviderMark, sentence } from './ui';
 
 /** How often and how long to wait for a new project to start. */
@@ -20,7 +28,7 @@ export const slug = (value: string) =>
 
 /** The account choice for a key kept on its own, outside any account. */
 const OWN = 'own';
-type Way = 'create' | 'paste';
+type Way = 'create' | 'capture' | 'paste';
 
 /** One step of the cascade: its choices while open, a one-line summary once chosen. */
 function Step({
@@ -88,9 +96,98 @@ function Choice({
   );
 }
 
+/** The provider's page for making a key by hand, if it has one. */
+export const keyPage = (m: Manifest) => m.key_page || m.token_page;
+
+/**
+ * Makes a key on the provider's page and picks it up from the clipboard: GetKeys opens the
+ * page filled in, the person clicks Create and Copy there, and the key is saved without passing
+ * through this window.
+ */
+export function CaptureKey({
+  manifest,
+  connectionId,
+  resource,
+  name,
+  group,
+  replaces,
+  busy,
+  perform,
+  done,
+}: Pick<Controller, 'busy' | 'perform'> & {
+  manifest: Manifest;
+  connectionId?: string;
+  resource?: string;
+  name: string;
+  group?: string;
+  /** The key the new one replaces; the new one joins its groups. */
+  replaces?: string;
+  done: (key: CredentialView) => void;
+}) {
+  const [waiting, setWaiting] = useState(false);
+  const live = useRef(false);
+  useEffect(
+    () => () => {
+      if (live.current) void cancelCapture().catch(() => {});
+    },
+    [],
+  );
+  const start = () => {
+    setWaiting(true);
+    live.current = true;
+    void perform(
+      () =>
+        captureKey({
+          pluginId: manifest.id,
+          connectionId: connectionId ?? null,
+          resource: resource ?? '',
+          name: name.trim(),
+          group: group ?? null,
+          replaces: replaces ?? null,
+        }),
+      (key) => (key ? `Saved ${key.name}` : undefined),
+    ).then((key) => {
+      live.current = false;
+      setWaiting(false);
+      if (key) done(key);
+    });
+  };
+  return waiting ? (
+    <div className="capture">
+      <p className="waiting" role="status">
+        <span className="pulse" aria-hidden="true" />
+        Waiting for the new key
+      </p>
+      <p className="small-text quiet">
+        In {manifest.name}, create the key, then copy it. GetKeys picks it up from the clipboard,
+        checks it and keeps it encrypted on this device.
+      </p>
+      <button
+        type="button"
+        className="button outline small"
+        onClick={() => void cancelCapture().catch(() => {})}
+      >
+        Cancel
+      </button>
+    </div>
+  ) : (
+    <div className="capture">
+      <p className="small-text quiet">
+        {manifest.name} makes keys only on its own page. GetKeys opens it filled in; create the key
+        there and copy it, and GetKeys keeps it. No pasting needed.
+      </p>
+      <button type="button" className="button full" disabled={busy || !name.trim()} onClick={start}>
+        Make it on {manifest.name} <ArrowUpRight size={14} />
+      </button>
+    </div>
+  );
+}
+
 /**
  * Makes a new key one choice at a time: the provider, then the account, then where the key
- * belongs (or a new project for it), then whether the provider makes it or it's pasted.
+ * belongs (or a new project for it). The provider makes the key; providers that can't make
+ * keys through their API make it on their page, and GetKeys picks it up. Pasting a key is
+ * there for keys made elsewhere.
  */
 export function NewKeyDialog({
   snapshot,
@@ -115,7 +212,8 @@ export function NewKeyDialog({
   const [resources, setResources] = useState<Resource[] | 'failed'>();
   const [place, setPlace] = useState<string>();
   const [making, setMaking] = useState(false);
-  const [way, setWay] = useState<Way>();
+  const [pasting, setPasting] = useState(false);
+  const [name, setName] = useState('');
 
   const providers = snapshot.plugins
     .filter((p) => p.installed)
@@ -127,16 +225,11 @@ export function NewKeyDialog({
   );
   const pastes = !!manifest && inputs(manifest.credential_fields).length > 0;
   const declarative = manifest?.kind === 'declarative';
-  const accountChoices = [
-    ...(declarative ? [] : accounts.map((c) => c.id)),
-    ...(pastes ? [OWN] : []),
-  ];
-  // Pick the only account by itself, unless connecting one is the better choice.
-  const onlyAccount =
-    accountChoices.length === 1 && (declarative || accountChoices[0] !== OWN)
-      ? accountChoices[0]
-      : undefined;
-  const accountId = account ?? onlyAccount;
+  const page = manifest ? keyPage(manifest) : '';
+  // Keys of declarative providers are never under an account; one account is picked by itself.
+  const accountId = declarative
+    ? OWN
+    : (account ?? (accounts.length === 1 ? accounts[0].id : undefined));
   const connection = accounts.find((c) => c.id === accountId);
   const makesKeys = !!connection && !!manifest?.operations.includes('create_credential');
   const makesProjects =
@@ -151,11 +244,18 @@ export function NewKeyDialog({
       ? ''
       : (place ??
         (listed && !makesProjects && listed.length <= 1 ? (listed[0]?.id ?? '') : undefined));
-  const ways: Way[] = [
-    ...(makesKeys ? (['create'] as const) : []),
-    ...(pastes ? (['paste'] as const) : []),
-  ];
-  const wayChosen = way ?? (ways.length === 1 ? ways[0] : undefined);
+  const ready = !!manifest && accountId !== undefined && placeId !== undefined;
+  const way: Way | undefined = !ready
+    ? undefined
+    : pasting && pastes
+      ? 'paste'
+      : makesKeys
+        ? 'create'
+        : pastes && page
+          ? 'capture'
+          : pastes
+            ? 'paste'
+            : undefined;
   const noun = manifest?.new_resource?.noun ?? 'project';
 
   useEffect(() => {
@@ -177,18 +277,17 @@ export function NewKeyDialog({
     setAccount(undefined);
     setPlace(undefined);
     setMaking(false);
-    setWay(undefined);
+    setPasting(false);
   };
   const pickAccount = (id?: string) => {
     setAccount(id);
     setPlace(undefined);
     setMaking(false);
-    setWay(undefined);
+    setPasting(false);
   };
   const pickPlace = (id?: string) => {
     setPlace(id);
     setMaking(false);
-    setWay(undefined);
   };
   /** Puts a new key in the group being viewed. */
   const file = async (key: CredentialView) =>
@@ -257,9 +356,10 @@ export function NewKeyDialog({
     );
 
   const accountName = (id: string) =>
-    id === OWN ? 'No account' : (accounts.find((c) => c.id === id)?.name ?? id);
+    id === OWN ? 'None' : (accounts.find((c) => c.id === id)?.name ?? id);
   const placeName = (id: string) =>
     listed?.find((r) => r.id === id)?.name || (id ? id : `No ${noun}`);
+  const site = manifest ? new URL(page || manifest.homepage).hostname.replace(/^www\./, '') : '';
 
   return (
     <Modal
@@ -270,40 +370,27 @@ export function NewKeyDialog({
     >
       <ol className="cascade">
         {providerStep}
-        {manifest && (
+        {manifest && !declarative && (
           <Step
             label="Account"
             chosen={accountId === undefined ? undefined : accountName(accountId)}
             change={account !== undefined ? () => pickAccount(undefined) : undefined}
           >
             <div className="choices">
-              {!declarative &&
-                accounts.map((c) => (
-                  <Choice
-                    key={c.id}
-                    mark={manifest.name}
-                    title={c.name}
-                    note={
-                      manifest.operations.includes('create_credential')
-                        ? `${manifest.name} makes the key`
-                        : undefined
-                    }
-                    onClick={() => pickAccount(c.id)}
-                  />
-                ))}
-              {pastes && (
+              {accounts.map((c) => (
                 <Choice
-                  icon={
-                    <span className="choice-icon" aria-hidden="true">
-                      —
-                    </span>
+                  key={c.id}
+                  mark={manifest.name}
+                  title={c.name}
+                  note={
+                    manifest.operations.includes('create_credential')
+                      ? `${manifest.name} makes the key`
+                      : undefined
                   }
-                  title="No account"
-                  note="Paste a key you already have"
-                  onClick={() => pickAccount(OWN)}
+                  onClick={() => pickAccount(c.id)}
                 />
-              )}
-              {!declarative && plugin && (
+              ))}
+              {plugin && (
                 <Choice
                   icon={
                     <span className="choice-icon" aria-hidden="true">
@@ -319,6 +406,11 @@ export function NewKeyDialog({
                 />
               )}
             </div>
+            {pastes && page && !accounts.length && (
+              <button type="button" className="text-button" onClick={() => pickAccount(OWN)}>
+                Make it on {site} instead
+              </button>
+            )}
           </Step>
         )}
         {connection && needsPlace && (
@@ -378,123 +470,71 @@ export function NewKeyDialog({
             )}
           </Step>
         )}
-        {manifest && accountId !== undefined && placeId !== undefined && (
-          <Step
-            label="Key"
-            chosen={
-              wayChosen === undefined
-                ? undefined
-                : wayChosen === 'create'
-                  ? `${manifest.name} makes a new one`
-                  : 'Paste one you have'
-            }
-            change={ways.length > 1 ? () => setWay(undefined) : undefined}
-          >
-            {ways.length ? (
-              <div className="choices">
-                {makesKeys && (
-                  <Choice
-                    icon={
-                      <span className="choice-icon" aria-hidden="true">
-                        <Plus size={14} />
-                      </span>
-                    }
-                    title="Create a new key"
-                    note={`${manifest.name} makes it; GetKeys keeps it`}
-                    onClick={() => setWay('create')}
-                  />
-                )}
-                {pastes && (
-                  <Choice
-                    icon={
-                      <span className="choice-icon" aria-hidden="true">
-                        ⎘
-                      </span>
-                    }
-                    title="Paste a key"
-                    note="One you already have"
-                    onClick={() => setWay('paste')}
-                  />
-                )}
-              </div>
-            ) : (
-              <>
-                <p className="quiet">
-                  {manifest.name} doesn’t make keys through its API. Make one on its site, then
-                  paste it here.
-                </p>
-                {manifest.token_page && (
-                  <button
-                    type="button"
-                    className="button outline small"
-                    disabled={busy}
-                    onClick={() =>
-                      void perform(() =>
-                        request({ kind: 'open_token_page', plugin_id: manifest.id }),
-                      )
-                    }
-                  >
-                    Open {manifest.name} <ArrowUpRight size={13} />
-                  </button>
-                )}
-              </>
-            )}
-          </Step>
-        )}
       </ol>
-      {manifest && accountId !== undefined && placeId !== undefined && wayChosen && (
+      {manifest && ready && !way && (
+        <p className="quiet">{manifest.name} keys can’t be added here yet.</p>
+      )}
+      {manifest && way && (
         <form
           className="cascade-form"
           onSubmit={(e) => {
             e.preventDefault();
+            if (way === 'capture') return;
             const data = new FormData(e.currentTarget);
-            const name = String(data.get('name')).trim();
             const fields = Object.fromEntries(
               inputs(manifest.credential_fields)
                 .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
                 .filter(([, value]) => value !== ''),
             );
+            const key = name.trim();
             void perform(
               async () =>
                 file(
-                  wayChosen === 'create'
+                  way === 'create'
                     ? await request<CredentialView>({
                         kind: 'create',
-                        connection_id: accountId,
-                        resource: placeId,
-                        name,
+                        connection_id: accountId!,
+                        resource: placeId!,
+                        name: key,
                       })
                     : accountId === OWN
                       ? await request<CredentialView>({
                           kind: 'save_key',
                           credential_id: null,
                           plugin_id: manifest.id,
-                          name,
+                          name: key,
                           fields,
                         })
                       : await request<CredentialView>({
                           kind: 'import',
                           input: {
-                            connection_id: accountId,
+                            connection_id: accountId!,
                             provider_id: null,
-                            resource: placeId,
-                            name,
+                            resource: placeId!,
+                            name: key,
                             project: '',
                             environment: '',
                             fields,
                           },
                         }),
                 ),
-              wayChosen === 'create' ? `Created ${name}` : 'Key saved',
+              way === 'create' ? `Created ${key}` : 'Key saved',
             ).then((result) => {
               if (result) close();
             });
           }}
         >
           <Field label="Name">
-            <input name="name" placeholder="Production API key" required autoFocus />
+            <input
+              name="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Production API key"
+              required
+              autoFocus
+            />
           </Field>
-          {wayChosen === 'paste' &&
+          {way === 'paste' &&
             inputs(manifest.credential_fields).map((f) => (
               <Field key={f.key} label={f.required ? f.label : `${f.label} (optional)`}>
                 <input
@@ -507,16 +547,37 @@ export function NewKeyDialog({
                 />
               </Field>
             ))}
-          <p className="small-text quiet">
-            {wayChosen === 'create'
-              ? `GetKeys asks ${manifest.name} for a new key, then keeps it encrypted on this device.`
-              : accountId === OWN
-                ? 'GetKeys keeps it encrypted on this device.'
-                : `GetKeys checks it with ${manifest.name}, then keeps it encrypted on this device.`}
-          </p>
-          <button className="button full" disabled={busy}>
-            {wayChosen === 'create' ? 'Create key' : 'Save key'}
-          </button>
+          {way === 'capture' ? (
+            <CaptureKey
+              {...{ manifest, busy, perform, name, group }}
+              connectionId={accountId === OWN ? undefined : accountId}
+              resource={placeId}
+              done={close}
+            />
+          ) : (
+            <>
+              <p className="small-text quiet">
+                {way === 'create'
+                  ? `${manifest.name} makes a new key; GetKeys keeps it encrypted on this device.`
+                  : accountId === OWN
+                    ? 'GetKeys keeps it encrypted on this device.'
+                    : `GetKeys checks it with ${manifest.name}, then keeps it encrypted on this device.`}
+              </p>
+              <button className="button full" disabled={busy}>
+                {way === 'create' ? 'Create key' : 'Save key'}
+              </button>
+            </>
+          )}
+          {pastes && way !== 'paste' && (
+            <button type="button" className="text-button" onClick={() => setPasting(true)}>
+              Already have a key? Paste it
+            </button>
+          )}
+          {pasting && (makesKeys || !!page) && (
+            <button type="button" className="text-button" onClick={() => setPasting(false)}>
+              {makesKeys ? `Have ${manifest.name} make one instead` : 'Make a new one instead'}
+            </button>
+          )}
         </form>
       )}
     </Modal>

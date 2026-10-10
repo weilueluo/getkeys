@@ -14,6 +14,8 @@ const normalize = (m: object) => {
     credential_fields: raw.credential_fields.map(field),
     account_fields: (raw.account_fields ?? []).map(field),
     token_page: raw.token_page ?? '',
+    key_page: raw.key_page ?? '',
+    revoke_by_value: raw.revoke_by_value ?? false,
     account_credentials: raw.account_credentials ?? false,
   } as Manifest;
 };
@@ -51,6 +53,7 @@ export function connectedSnapshot(): Snapshot {
       plugin_id: '',
       connection_id: 'connection',
       provider_id: 'key_123',
+      origin: 'listed',
       name: 'Production API',
       credential_type: 'secret',
       resource: 'abcdefghijklmnopqrst',
@@ -88,6 +91,7 @@ export function connectedSnapshot(): Snapshot {
       plugin_id: '',
       connection_id: 'connection',
       provider_id: 'sign-in',
+      origin: 'found',
       name: 'Supabase CLI',
       credential_type: 'sign_in',
       resource: '',

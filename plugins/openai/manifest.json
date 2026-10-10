@@ -36,6 +36,7 @@
     }
   ],
   "token_page": "https://platform.openai.com/settings/organization/admin-keys",
+  "key_page": "https://platform.openai.com/api-keys",
   "key_pattern": "^sk-((proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})$",
   "validate": { "url": "https://api.openai.com/v1/models" },
   "sources": [

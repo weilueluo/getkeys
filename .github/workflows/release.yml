@@ -11,10 +11,10 @@ on:
 permissions:
   contents: read
 jobs:
-  checks:
+  # CI checks and packages every platform at once; publish ships the packages it tested.
+  ci:
     uses: ./.github/workflows/ci.yml
   live:
-    needs: checks
     # Runs only once the live-sandbox environment is configured (see docs/live-tests.md).
     if: vars.GETKEYS_LIVE_ENABLED == 'true'
     runs-on: windows-latest
@@ -26,7 +26,6 @@ jobs:
     env:
       GETKEYS_LIVE_ALLOW_WRITES: 'true'
       GETKEYS_LIVE_GITHUB_TOKEN: ${{ secrets.GETKEYS_LIVE_GITHUB_TOKEN }}
-      GETKEYS_LIVE_GITHUB_REPO: ${{ vars.GETKEYS_LIVE_GITHUB_REPO }}
       GETKEYS_LIVE_AWS_ACCESS_KEY_ID: ${{ secrets.GETKEYS_LIVE_AWS_ACCESS_KEY_ID }}
       GETKEYS_LIVE_AWS_SECRET_ACCESS_KEY: ${{ secrets.GETKEYS_LIVE_AWS_SECRET_ACCESS_KEY }}
       GETKEYS_LIVE_AWS_SESSION_TOKEN: ${{ secrets.GETKEYS_LIVE_AWS_SESSION_TOKEN }}
@@ -34,124 +33,18 @@ jobs:
       GETKEYS_LIVE_SUPABASE_TOKEN: ${{ secrets.GETKEYS_LIVE_SUPABASE_TOKEN }}
       GETKEYS_LIVE_SUPABASE_PROJECT: ${{ vars.GETKEYS_LIVE_SUPABASE_PROJECT }}
       GETKEYS_LIVE_VERCEL_TOKEN: ${{ secrets.GETKEYS_LIVE_VERCEL_TOKEN }}
-      GETKEYS_LIVE_VERCEL_PROJECT: ${{ vars.GETKEYS_LIVE_VERCEL_PROJECT }}
       GETKEYS_LIVE_VERCEL_TEAM_ID: ${{ vars.GETKEYS_LIVE_VERCEL_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup
         with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
-      - uses: Swatinem/rust-cache@v2
-      - shell: pwsh
-        run: |
-          'PERL=C:\Strawberry\perl\bin\perl.exe' >> $env:GITHUB_ENV
-      - run: npm ci
+          cache-key: live
       - run: npm run test:live
-  package:
-    name: package (${{ matrix.name }})
-    needs: [checks, live]
-    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.live.result != 'failure' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { name: macos-arm64, os: macos-latest, target: aarch64-apple-darwin }
-          - { name: macos-x64, os: macos-latest, target: x86_64-apple-darwin }
-          # The oldest supported Ubuntu keeps the AppImage and deb compatible with older glibc.
-          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
-          targets: wasm32-unknown-unknown, ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          'PERL=C:\Strawberry\perl\bin\perl.exe' >> $env:GITHUB_ENV
-      - if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libssl-dev libdbus-1-dev \
-            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev \
-            libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf file xdg-utils
-      - run: npm ci
-      - run: npm run desktop -- build --target ${{ matrix.target }}
-      - name: Collect the app bundle and the standalone CLI
-        shell: bash
-        env:
-          NAME: ${{ matrix.name }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          out=target/$TARGET/release
-          mkdir -p release
-          case "$RUNNER_OS" in
-            Windows)
-              cp "$out"/bundle/nsis/*.exe release/
-              cp "$out/getkeys.exe" "release/getkeys-$NAME.exe"
-              ;;
-            macOS)
-              cp "$out"/bundle/dmg/*.dmg release/
-              ;;
-            Linux)
-              cp "$out"/bundle/appimage/*.AppImage "$out"/bundle/deb/*.deb release/
-              ;;
-          esac
-          if [ "$RUNNER_OS" != Windows ]; then
-            # The CLI finds the provider registry in a registry/ folder beside it.
-            cli="target/getkeys-$NAME"
-            mkdir -p "$cli"
-            cp "$out/getkeys" "$cli/"
-            cp -R registry/dist "$cli/registry"
-            tar -czf "release/getkeys-$NAME.tar.gz" -C "$cli" getkeys registry
-          fi
-          ls -la release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ matrix.name }}
-          path: release/*
-          if-no-files-found: error
-  extensions:
-    needs: checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm run extensions:build
-      - name: Collect the extensions and the signed provider registry
-        run: |
-          mkdir -p release
-          cp extensions/browser/getkeys-browser.zip extensions/vscode/getkeys.vsix registry/dist/* release/
-          ls -la release
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-extensions
-          path: release/*
-          if-no-files-found: error
   publish:
-    needs: [package, extensions]
+    needs: [ci, live]
     # Dispatched runs are dry runs unless dry_run is unticked on a v* tag.
     if: >-
-      ${{ !cancelled() && needs.package.result == 'success' && needs.extensions.result == 'success'
+      ${{ !cancelled() && needs.ci.result == 'success' && needs.live.result != 'failure'
       && startsWith(github.ref, 'refs/tags/v')
       && (github.event_name == 'push' || inputs.dry_run == false) }}
     runs-on: ubuntu-latest

@@ -34,6 +34,7 @@
     }
   ],
   "token_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name=GetKeys&scopes=api",
+  "key_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name={name}&scopes=api",
   "account_credentials": true,
   "key_pattern": "^glpat-[A-Za-z0-9_.-]{20,}$",
   "validate": { "url": "https://gitlab.com/api/v4/personal_access_tokens/self" },

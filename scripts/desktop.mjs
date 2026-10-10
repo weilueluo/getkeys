@@ -8,9 +8,17 @@ if (args[0] === 'build') {
   const at = args.findIndex((a) => a === '--target' || a === '-t' || a.startsWith('--target='));
   const target = at < 0 ? undefined : (args[at].split('=')[1] ?? args[at + 1]);
   const exe = process.platform === 'win32' ? 'getkeys.exe' : 'getkeys';
-  run('cargo', ['build', '--release', '-p', 'getkeys', ...(target ? ['--target', target] : [])]);
+  // A debug app gets a debug CLI, which shares its build with the app's.
+  const profile = args.includes('--debug') ? 'debug' : 'release';
+  run('cargo', [
+    'build',
+    ...(profile === 'release' ? ['--release'] : []),
+    '-p',
+    'getkeys',
+    ...(target ? ['--target', target] : []),
+  ]);
   // Resource sources are relative to src-tauri.
-  const cli = ['../../../target', target, 'release', exe].filter(Boolean).join('/');
+  const cli = ['../../../target', target, profile, exe].filter(Boolean).join('/');
   const config = resolve('target/cli.conf.json');
   mkdirSync('target', { recursive: true });
   writeFileSync(config, JSON.stringify({ bundle: { resources: { [cli]: `bin/${exe}` } } }));

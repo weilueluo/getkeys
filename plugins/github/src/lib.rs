@@ -24,7 +24,10 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         if let Some(err) = provider_error(response) {
             return Ok(err);
         }
-        if matches!(call.operation, Operation::ValidateCredential { .. }) {
+        if matches!(
+            call.operation,
+            Operation::ValidateCredential { .. } | Operation::RevokeCredential { .. }
+        ) {
             return Ok(done(Outcome::Done));
         }
         let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
@@ -72,6 +75,19 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         }
         Operation::ListResources => {
             get("https://api.github.com/user/repos?per_page=100&page=1&sort=full_name".into())
+        }
+        // GitHub revokes any token given its value. The request carries no sign-in: the
+        // endpoint refuses authenticated calls.
+        Operation::RevokeCredential { .. } => {
+            let mut r = post(
+                "https://api.github.com/credentials/revoke".into(),
+                json!({"credentials": []}),
+            );
+            r.auth = RequestAuth::None;
+            r.secret = Some(SecretInjection::JsonArray {
+                field: "credentials".into(),
+            });
+            r
         }
         _ => {
             return Ok(error(
@@ -123,5 +139,36 @@ mod tests {
             panic!()
         };
         assert!(url.contains("target_name=owner"));
+    }
+    #[test]
+    fn tokens_are_revoked_by_value_without_signing_in() {
+        let call = |response| Call {
+            operation: Operation::RevokeCredential {
+                resource: "owner/repo".into(),
+                credential: "import-1".into(),
+            },
+            config: BTreeMap::new(),
+            cursor: Value::Null,
+            response,
+        };
+        let Step::Request { request, .. } = handle(call(None)) else {
+            panic!()
+        };
+        assert_eq!(request.url, "https://api.github.com/credentials/revoke");
+        assert!(matches!(request.auth, RequestAuth::None));
+        assert!(
+            matches!(request.secret, Some(SecretInjection::JsonArray { field }) if field == "credentials")
+        );
+        let accepted = HttpResponse {
+            status: 202,
+            body: "{}".into(),
+            headers: BTreeMap::new(),
+        };
+        assert!(matches!(
+            handle(call(Some(accepted))),
+            Step::Complete {
+                result: Outcome::Done
+            }
+        ));
     }
 }

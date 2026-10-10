@@ -247,12 +247,36 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         Operation::CreateCredential { name, .. } => {
             req.method = "POST".into();
             req.url.push_str("?reveal=true");
-            req.body = Some(json!({"name": name, "type": "secret"}));
+            req.body = Some(json!({"name": api_name(&name), "type": "secret"}));
         }
         Operation::RevokeCredential { .. } => req.method = "DELETE".into(),
         _ => {}
     }
     Ok(request(req, Value::Null))
+}
+
+/// Supabase key names are lowercase letters, digits and underscores, so "Production API key ·
+/// rotated" becomes `production_api_key`.
+fn api_name(name: &str) -> String {
+    let base = name.split(" \u{b7} ").next().unwrap_or(name).trim();
+    let mut out: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    out = out.trim_matches('_').to_owned();
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+    if out.is_empty() || out.starts_with(|c: char| c.is_ascii_digit()) {
+        out.insert_str(0, "key_");
+    }
+    out.chars().take(64).collect()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -268,6 +292,13 @@ pub fn run(call: extism_pdk::Json<Call>) -> extism_pdk::FnResult<extism_pdk::Jso
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn key_names_fit_what_supabase_accepts() {
+        assert_eq!(super::api_name("Production API key"), "production_api_key");
+        assert_eq!(super::api_name("web \u{b7} rotated"), "web");
+        assert_eq!(super::api_name("2nd key!"), "key_2nd_key");
+        assert_eq!(super::api_name("  "), "key_");
+    }
     use super::*;
     fn call(operation: Operation, body: Option<Value>) -> Call {
         Call {

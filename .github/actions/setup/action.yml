@@ -1,0 +1,53 @@
+name: Set up GetKeys
+description: Node, the pinned Rust toolchain with a per-job build cache, and the system libraries the workspace builds against.
+inputs:
+  rust:
+    description: Install Rust and the system libraries
+    default: 'true'
+  components:
+    description: Extra rustup components
+    default: ''
+  targets:
+    description: Extra rustup targets
+    default: wasm32-unknown-unknown
+  cache-key:
+    description: Build cache name; jobs that build the same things share one
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+    - if: inputs.rust == 'true'
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: 1.99.0
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
+    - if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-key }}
+        # Tags and pull requests restore main's caches; only main writes them, so they stay warm
+        # for releases and saving doesn't slow every run.
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - name: Select Strawberry Perl for vendored OpenSSL
+      if: inputs.rust == 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $perl = 'C:\Strawberry\perl\bin\perl.exe'
+        if (!(Test-Path -LiteralPath $perl)) { throw 'Strawberry Perl is required' }
+        "PERL=$perl" >> $env:GITHUB_ENV
+    - name: Install Tauri and Secret Service dependencies
+      if: inputs.rust == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q build-essential pkg-config libssl-dev libdbus-1-dev \
+          libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev \
+          libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf file xdg-utils \
+          gnome-keyring dbus-x11
+    - run: npm ci
+      shell: bash
