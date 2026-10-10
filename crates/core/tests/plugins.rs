@@ -15,7 +15,12 @@ fn registry(installed: PathBuf) -> Registry {
 fn all_real_wasm_packages_install_and_describe_their_signed_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let registry = registry(dir.path().into());
-    assert_eq!(registry.catalog.packages.len(), 4);
+    let providers =
+        std::fs::read_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins"))
+            .unwrap()
+            .filter(|e| e.as_ref().unwrap().path().is_dir())
+            .count();
+    assert_eq!(registry.catalog.packages.len(), providers);
     for p in &registry.catalog.packages {
         registry.install(&p.manifest.id, false).unwrap();
         assert_eq!(

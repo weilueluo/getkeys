@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Blocks, Check, KeyRound, Lock, Settings, TriangleAlert, X } from 'lucide-react';
 import type { AuthProgress, ConnectionView, Discovery, PluginView, Snapshot } from './types';
 import { request } from './bridge';
@@ -9,6 +11,7 @@ import { VaultPanel } from './VaultPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { JobDialog, useJob, type Outcome } from './Job';
 import { listed } from './secrets';
+import { onShell, type ShellEvent } from './shell';
 
 type Page = 'vault' | 'plugins' | 'settings';
 const navigation = [
@@ -263,6 +266,25 @@ export function App() {
     setPage(next);
     setSearch('');
   };
+  // The tray and getkeys:// links: refresh, open a key, or show a provider.
+  const [focusKey, setFocusKey] = useState<{ id: string }>();
+  const shell = useRef<(event: ShellEvent, payload: string) => void>(undefined);
+  shell.current = (event, payload) => {
+    if (event === 'tray-refresh') return void refreshKeys();
+    changePage(event === 'open-key' ? 'vault' : 'plugins');
+    if (event === 'open-key') setFocusKey({ id: payload });
+    const plugin = snapshot?.plugins.find(
+      (p) => p.manifest.id === payload || p.manifest.id.endsWith(`.${payload}`),
+    );
+    if (event === 'open-provider' && plugin) setSearch(plugin.manifest.name);
+  };
+  useEffect(() => onShell((event, payload) => shell.current?.(event, payload)), []);
+  // The CLI and agents changed the vault through the app.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const stop = listen('vault-changed', () => void refresh().catch(() => {}));
+    return () => void stop.then((f) => f());
+  }, [refresh]);
   const control = snapshot && { snapshot, busy, perform };
   const connections = snapshot?.connections ?? [];
   const searchField = (placeholder: string) => (
@@ -378,6 +400,7 @@ export function App() {
                     searchField={searchField('Filter keys')}
                     browse={() => changePage('plugins')}
                     refreshKeys={(scope) => void refreshKeys(scope)}
+                    focus={focusKey}
                   />
                 )}
                 {page === 'settings' && <SettingsPanel {...control} />}

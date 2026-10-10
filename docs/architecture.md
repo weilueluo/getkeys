@@ -5,7 +5,11 @@ The repository follows the explicit contracts, cohesive modules, and small deter
 ```mermaid
 flowchart LR
   UI[React desktop UI] --> IPC[Tauri typed commands]
-  CLI[CLI] --> Core[Rust core]
+  CLI[CLI and MCP server] --> Agent[Agent endpoint]
+  Agent --> Core
+  Ext[Browser extension] --> Host[Native messaging host] --> CLI
+  VSCode[VS Code extension] --> CLI
+  CLI -. app not running .-> Core[Rust core]
   IPC --> Core
   Core --> Vault[SQLCipher vault]
   Vault --- OS[OS credential store]
@@ -26,7 +30,9 @@ flowchart LR
 | `crates/core` | Vault, authorization, plugin runtime, HTTP, rotation |
 | `plugins/*` | Provider manifests and pure request/response adapters |
 | `apps/desktop` | Minimal React interface and native IPC |
-| `apps/cli` | Metadata, auth, typed commands, process injection, backups |
+| `apps/cli` | `getkeys` CLI, `getkeys://` references, MCP server, native messaging host |
+| `extensions/browser` | MV3 extension that spots keys on provider pages and saves them |
+| `extensions/vscode` | Key tree, references, `.env` writing, and tasks with keys |
 | `services/auth-broker` | Confidential OAuth exchanges for Supabase and Vercel |
 | `tools/xtask` | Signing, packaging, type generation, live checks |
 
@@ -45,6 +51,16 @@ Connecting an account stores its own credential as a management key (`sign_in`).
 A refresh runs local connection, listing, and checking for every provider and account concurrently, bounded per stage. The native host serves those slow, network-bound commands (`sync`, `resources`, `connect_local`, `scan_sources`, `check`) on a fork of the app: a second connection to the same vault, opened under the shared lock and used after it is released. The vault runs in WAL mode and every write takes an `IMMEDIATE` transaction, so concurrent writers queue on the database lock instead of failing. Renewing an expiring management key keeps that transaction open, so two forks never spend a rotating refresh token twice. After listing, `check` validates each key no provider listing confirmed (imported keys, and keys of providers that can't list); a `401` or `403` stores a problem, which the snapshot reports as `problem` alongside expiry and sign-in failures. The renderer marks those keys **Invalid**.
 
 Keys added by hand without a provider (`save_custom`) have the credential type `custom` and no connection. Their fields are the variable names the person chose; secret values go to the encrypted value and the rest are stored as details. Every key carries `groups`, set with `set_groups` and kept across syncs and rotations. The renderer scopes Refresh to the accounts behind a group's keys and Export to its keys. Groups made in the renderer before they have keys are remembered in local storage. After a refresh, the renderer puts keys whose listing returned `forbidden`, or that `check` marked with a problem, in the `Failed` group, and takes keys out of it once their account lists them again. `export_env` is a native command, not a vault request: the renderer sends credential IDs, field names, and variable names, and the host writes the values to a file picked in the system save dialog, or to the clipboard for 60 seconds. Values never pass through the renderer.
+## Providers without code
+
+A manifest with no Wasm artifact is a declarative provider. It declares `sources` (environment variables, files with a format and a path into them), a `key_pattern`, and a `check` request. `discover` reads those sources, and each key found is saved as a key the provider owns (`found:<source>`), with no account. `check` sends the declared request with the key; a `401` or `403` marks it invalid. Managed providers use the same sources to find sign-ins. Keys typed in for such a provider (`save_key`) are stored the same way. Pasting a new value into a key found on this device retires the found key and stores the new one under its own ID, so the next refresh doesn't put the old value back. Removing a provider forgets the keys it owns.
+
+Settings can list project folders. On refresh, `projects::scan` walks each folder (four levels, skipping dependency, build, and hidden folders), reads `.env` files other than templates such as `.env.example`, and keeps variables that a provider's sources name or whose value matches its `key_pattern`. Each becomes a found key named `VAR · folder`. A value already found elsewhere is offered once.
+
+## CLI, agents, and extensions
+
+The desktop app serves the core over a local agent endpoint: a named pipe `getkeys-agent` on Windows, a `0600` socket in the data folder elsewhere. The CLI uses it while the app runs, so the window updates (`vault-changed`), and opens the vault directly otherwise. `getkeys mcp` is a stdio MCP server over the same client; it can be turned off in Settings (`prefs.json`), and every value it hands an agent is written to the audit log. The browser extension reaches `getkeys native-host`, which answers only the extension's fixed ID, gives it the providers' key patterns, and saves keys it sends. The VS Code extension runs the CLI (`ls --json`, `get`, `env`, `run`). The tray, the Ctrl+Shift+K quick-copy palette, single-instance handling, and `getkeys://` deep links live in the desktop shell.
+
 ## Vault and frontend
 
 SQLCipher encrypts the database and journals. A random 256-bit vault key is stored through the OS credential store. Startup fails if the key is missing for an existing vault. The renderer receives metadata until an explicit reveal. Browser builds have no vault fallback, local-storage credential store, or bundled sample accounts.

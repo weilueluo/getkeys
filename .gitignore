@@ -15,3 +15,7 @@ node_modules/
 *.db-shm
 *.db-wal
 *.age
+/extensions/node_modules/
+/extensions/*/dist/
+/extensions/browser/*.zip
+/extensions/vscode/*.vsix

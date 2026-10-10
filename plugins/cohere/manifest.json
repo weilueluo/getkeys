@@ -1,0 +1,26 @@
+{
+  "id": "official.cohere",
+  "name": "Cohere",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Cohere API keys and check that they still work.",
+  "homepage": "https://cohere.com",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.cohere.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "Paste the key",
+      "required": true,
+      "env": "CO_API_KEY"
+    }
+  ],
+  "token_page": "https://dashboard.cohere.com/api-keys",
+  "validate": { "url": "https://api.cohere.com/v1/models" },
+  "sources": [
+    { "kind": "env", "var": "CO_API_KEY", "role": "key" },
+    { "kind": "env", "var": "COHERE_API_KEY", "role": "key" }
+  ]
+}

@@ -17,7 +17,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
   },
   projects: [
-    { name: 'browser', testMatch: 'ui.spec.ts', use: { browserName: 'chromium' } },
+    { name: 'browser', testIgnore: 'native.spec.ts', use: { browserName: 'chromium' } },
     { name: 'native', testMatch: 'native.spec.ts', workers: 1 },
   ],
 });

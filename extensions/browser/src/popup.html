@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>GetKeys</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon-32.png" width="20" height="20" alt="" />
+      <h1>GetKeys</h1>
+      <span id="status" class="pill" role="status">Checking…</span>
+    </header>
+    <section id="host" class="notice" hidden>
+      <p id="host-message"></p>
+      <button id="retry" class="btn outline small" type="button">Retry</button>
+    </section>
+    <section>
+      <h2>On this page</h2>
+      <ul id="list"></ul>
+      <p id="empty" class="quiet" hidden>No keys detected on this page.</p>
+    </section>
+    <section id="selection">
+      <button id="selection-start" class="btn outline full" type="button">Save selection</button>
+      <form id="selection-form" class="item" hidden>
+        <div class="item-head">
+          <span id="selection-provider" class="provider"></span>
+          <span id="selection-preview" class="preview"></span>
+        </div>
+        <div class="item-row">
+          <input id="selection-name" type="text" maxlength="200" aria-label="Name" />
+          <button class="btn small" type="submit">Save</button>
+        </div>
+        <p id="selection-status" class="item-status" role="status"></p>
+      </form>
+      <p id="selection-hint" class="quiet small" hidden></p>
+    </section>
+    <footer>
+      <label class="check">
+        <input id="prompts" type="checkbox" checked />
+        Offer to save keys shown on pages
+      </label>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

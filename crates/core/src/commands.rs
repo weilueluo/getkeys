@@ -1,4 +1,9 @@
-use crate::{App, model::*};
+use crate::{
+    App,
+    agents::{self, AgentClient},
+    model::*,
+    prefs::Prefs,
+};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_value};
@@ -144,15 +149,85 @@ pub enum Command {
         credential_id: String,
     },
     OpenVaultFolder,
+    SetProjectFolders {
+        folders: Vec<String>,
+    },
     Restore {
         path: String,
         passphrase: String,
     },
+    /// Values of the chosen fields by variable name. `via` names the client (such as
+    /// `mcp.get_secret`) recorded in the activity log for each key read.
+    Resolve {
+        lines: Vec<EnvLine>,
+        via: Option<String>,
+    },
+    /// The chosen fields as `.env` text.
+    ExportEnv {
+        lines: Vec<EnvLine>,
+        via: Option<String>,
+    },
+    GetPrefs,
+    SetPrefs {
+        prefs: Prefs,
+    },
+    AgentStatus,
+    /// Adds `getkeys mcp` to an agent app's MCP configuration.
+    ConnectAgent {
+        client: AgentClient,
+    },
+}
+impl Command {
+    /// Whether the command can change what the vault holds, so open windows reload.
+    pub fn mutates(&self) -> bool {
+        !matches!(
+            self,
+            Command::Snapshot
+                | Command::Discover
+                | Command::Reveal { .. }
+                | Command::Resolve { .. }
+                | Command::ExportEnv { .. }
+                | Command::GetPrefs
+                | Command::AgentStatus
+                | Command::OpenTokenPage { .. }
+                | Command::OpenVaultFolder
+                | Command::Export { .. }
+                | Command::Guide { .. }
+                | Command::Resources { .. }
+        )
+    }
 }
 impl App {
+    fn audit(&self, via: Option<String>, lines: &[EnvLine]) -> Result<()> {
+        if let Some(via) = via {
+            let ids: std::collections::BTreeSet<_> =
+                lines.iter().map(|l| l.credential_id.as_str()).collect();
+            for id in ids {
+                self.vault.event(&via, id)?;
+            }
+        }
+        Ok(())
+    }
     pub fn dispatch(&self, command: Command) -> Result<Value> {
         Ok(match command {
             Command::Snapshot => to_value(self.snapshot()?)?,
+            Command::Resolve { lines, via } => {
+                let values = self.resolve(&lines)?;
+                self.audit(via, &lines)?;
+                to_value(values)?
+            }
+            Command::ExportEnv { lines, via } => {
+                let text = self.export_env(&lines)?;
+                self.audit(via, &lines)?;
+                to_value(text)?
+            }
+            Command::GetPrefs => to_value(self.prefs()?)?,
+            Command::SetPrefs { prefs } => to_value(self.set_prefs(prefs)?)?,
+            Command::AgentStatus => to_value(agents::status()?)?,
+            Command::ConnectAgent { client } => {
+                agents::connect(client, &client.config()?, &agents::cli_path()?)?;
+                to_value(agents::status()?)?
+            }
             Command::Discover => to_value(self.discover()?)?,
             Command::ConnectLocal {
                 source_id,
@@ -285,6 +360,7 @@ impl App {
                 fields,
             } => to_value(self.save_key(credential_id.as_deref(), &plugin_id, &name, fields)?)?,
             Command::RotateNow { credential_id } => to_value(self.rotate_now(&credential_id)?)?,
+            Command::SetProjectFolders { folders } => to_value(self.set_project_folders(folders)?)?,
             Command::OpenVaultFolder => {
                 let folder = self
                     .vault

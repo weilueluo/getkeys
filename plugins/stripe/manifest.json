@@ -1,0 +1,36 @@
+{
+  "id": "official.stripe",
+  "name": "Stripe",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Stripe secret and restricted keys and check that they still work.",
+  "homepage": "https://stripe.com",
+  "kind": "declarative",
+  "category": "payments",
+  "hosts": ["api.stripe.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "Secret key",
+      "placeholder": "sk_live_…",
+      "required": true,
+      "env": "STRIPE_SECRET_KEY"
+    }
+  ],
+  "token_page": "https://dashboard.stripe.com/apikeys",
+  "key_pattern": "^(sk|rk)_(live|test)_[A-Za-z0-9]{20,}$",
+  "validate": { "url": "https://api.stripe.com/v1/balance" },
+  "sources": [
+    {
+      "id": "stripe_cli",
+      "label": "Stripe CLI (test mode)",
+      "kind": "file",
+      "role": "key",
+      "paths": ["{env:XDG_CONFIG_HOME}/stripe/config.toml", "~/.config/stripe/config.toml"],
+      "format": "toml",
+      "pointer": "/default/test_mode_api_key"
+    },
+    { "kind": "env", "var": "STRIPE_SECRET_KEY", "role": "key" },
+    { "kind": "env", "var": "STRIPE_API_KEY", "role": "key" }
+  ]
+}

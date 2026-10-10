@@ -1,0 +1,35 @@
+{
+  "id": "official.fireworks",
+  "name": "Fireworks AI",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Fireworks AI API keys and check that they still work.",
+  "homepage": "https://fireworks.ai",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.fireworks.ai"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "fw_…",
+      "required": true,
+      "env": "FIREWORKS_API_KEY"
+    }
+  ],
+  "token_page": "https://app.fireworks.ai/settings/users/api-keys",
+  "key_pattern": "^fw_[A-Za-z0-9]{20,}$",
+  "validate": { "url": "https://api.fireworks.ai/inference/v1/models" },
+  "sources": [
+    {
+      "id": "firectl",
+      "label": "Fireworks CLI",
+      "kind": "file",
+      "role": "key",
+      "paths": ["~/.fireworks/auth.ini"],
+      "format": "ini",
+      "pointer": "api_key"
+    },
+    { "kind": "env", "var": "FIREWORKS_API_KEY", "role": "key" }
+  ]
+}

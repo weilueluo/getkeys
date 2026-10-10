@@ -140,7 +140,10 @@ impl Transport {
             match auth {
                 AuthMaterial::Bearer { token, .. } => {
                     if let Some(header) = auth_header {
-                        ensure!(header == "apikey", "Unsupported authentication header");
+                        ensure!(
+                            ["apikey", "x-api-key", "x-goog-api-key"].contains(&header.as_str()),
+                            "Unsupported authentication header"
+                        );
                         input.headers.insert(header, token.clone());
                     } else {
                         input

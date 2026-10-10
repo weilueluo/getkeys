@@ -1,0 +1,50 @@
+{
+  "id": "official.anthropic",
+  "name": "Anthropic",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Connect with an Admin API key to see, disable and archive your organization's Claude API keys.",
+  "homepage": "https://www.anthropic.com",
+  "category": "ai",
+  "hosts": ["api.anthropic.com"],
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "validate_credential",
+    "deactivate_credential",
+    "revoke_credential",
+    "guide"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "sk-ant-api03-…",
+      "required": true,
+      "env": "ANTHROPIC_API_KEY"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Admin API key",
+      "placeholder": "sk-ant-admin01-…",
+      "required": true,
+      "env": "ANTHROPIC_ADMIN_KEY"
+    }
+  ],
+  "token_page": "https://console.anthropic.com/settings/admin-keys",
+  "key_pattern": "^sk-ant-(api|admin)\\d\\d-[A-Za-z0-9_-]{20,}$",
+  "validate": {
+    "url": "https://api.anthropic.com/v1/models",
+    "header": "x-api-key",
+    "prefix": "",
+    "headers": { "anthropic-version": "2023-06-01" }
+  },
+  "sources": [
+    { "kind": "env", "var": "ANTHROPIC_ADMIN_KEY" },
+    { "kind": "env", "var": "ANTHROPIC_API_KEY", "role": "key" }
+  ]
+}

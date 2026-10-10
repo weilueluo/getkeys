@@ -1,0 +1,24 @@
+{
+  "id": "official.xai",
+  "name": "xAI",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep xAI Grok API keys and check that they still work.",
+  "homepage": "https://x.ai",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.x.ai"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "xai-…",
+      "required": true,
+      "env": "XAI_API_KEY"
+    }
+  ],
+  "token_page": "https://console.x.ai",
+  "key_pattern": "^xai-[A-Za-z0-9]{40,}$",
+  "validate": { "url": "https://api.x.ai/v1/api-key" },
+  "sources": [{ "kind": "env", "var": "XAI_API_KEY", "role": "key" }]
+}

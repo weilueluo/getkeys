@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "palette",
+  "description": "The quick-copy palette lists keys, copies one, and hides itself.",
+  "windows": ["palette"],
+  "permissions": ["core:default", "core:window:allow-hide"]
+}

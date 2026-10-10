@@ -1,6 +1,6 @@
 {
   "name": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -19,7 +19,9 @@
     "test:live": "node scripts/live.mjs",
     "format": "prettier --write apps/desktop/src tests scripts playwright*.config.ts apps/desktop/vite.config.ts",
     "format:check": "prettier --check apps/desktop/src tests scripts playwright*.config.ts apps/desktop/vite.config.ts",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "extensions:build": "node extensions/scripts/ensure-deps.mjs && npm run build --prefix extensions",
+    "extensions:test": "node extensions/scripts/ensure-deps.mjs && npm test --prefix extensions"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

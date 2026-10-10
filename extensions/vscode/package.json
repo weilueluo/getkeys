@@ -1,0 +1,209 @@
+{
+  "name": "getkeys",
+  "displayName": "GetKeys",
+  "description": "Browse your GetKeys keys, insert getkeys:// references, write .env files and run tasks with keys injected.",
+  "version": "0.2.0",
+  "publisher": "getkeys",
+  "license": "MIT",
+  "private": true,
+  "icon": "dist/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weilueluo/getkeys.git"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "api keys",
+    "secrets",
+    "env",
+    "dotenv"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Running tasks with keys is disabled in untrusted workspaces.",
+      "restrictedConfigurations": [
+        "getkeys.cliPath"
+      ]
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "GetKeys",
+      "properties": {
+        "getkeys.cliPath": {
+          "type": "string",
+          "default": "getkeys",
+          "scope": "machine-overridable",
+          "description": "Path to the `getkeys` CLI. Leave as `getkeys` to use the one on PATH."
+        },
+        "getkeys.clipboardClearSeconds": {
+          "type": "number",
+          "default": 45,
+          "minimum": 0,
+          "description": "Clear a copied key from the clipboard after this many seconds (0 keeps it)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "getkeys",
+          "title": "GetKeys",
+          "icon": "media/key.svg"
+        }
+      ]
+    },
+    "views": {
+      "getkeys": [
+        {
+          "id": "getkeys.keys",
+          "name": "Keys",
+          "icon": "media/key.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "getkeys.keys",
+        "contents": "The GetKeys CLI was not found.\nInstall the GetKeys app (it adds `getkeys` to PATH) or point the extension at it.\n[Set CLI Path](command:getkeys.configure)\n[Retry](command:getkeys.reload)",
+        "when": "getkeys.state == missing"
+      },
+      {
+        "view": "getkeys.keys",
+        "contents": "GetKeys could not list keys.\n[Retry](command:getkeys.reload)",
+        "when": "getkeys.state == error"
+      },
+      {
+        "view": "getkeys.keys",
+        "contents": "No keys yet. Add keys in the GetKeys app.\n[Reload](command:getkeys.reload)",
+        "when": "getkeys.state == empty"
+      }
+    ],
+    "commands": [
+      {
+        "command": "getkeys.reload",
+        "title": "Reload Keys",
+        "category": "GetKeys",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "getkeys.refresh",
+        "title": "Refresh from Providers",
+        "category": "GetKeys",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "getkeys.insertRef",
+        "title": "Insert Key Reference",
+        "category": "GetKeys",
+        "icon": "$(insert)"
+      },
+      {
+        "command": "getkeys.copyKey",
+        "title": "Copy Key",
+        "category": "GetKeys",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "getkeys.writeEnv",
+        "title": "Write .env",
+        "category": "GetKeys"
+      },
+      {
+        "command": "getkeys.runTask",
+        "title": "Run Task with Keys",
+        "category": "GetKeys",
+        "icon": "$(play)"
+      },
+      {
+        "command": "getkeys.configure",
+        "title": "Set CLI Path",
+        "category": "GetKeys"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "getkeys.runTask",
+          "when": "view == getkeys.keys",
+          "group": "navigation@1"
+        },
+        {
+          "command": "getkeys.reload",
+          "when": "view == getkeys.keys",
+          "group": "navigation@2"
+        },
+        {
+          "command": "getkeys.refresh",
+          "when": "view == getkeys.keys",
+          "group": "more@1"
+        },
+        {
+          "command": "getkeys.writeEnv",
+          "when": "view == getkeys.keys",
+          "group": "more@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "getkeys.insertRef",
+          "when": "view == getkeys.keys && viewItem == key",
+          "group": "inline@1"
+        },
+        {
+          "command": "getkeys.copyKey",
+          "when": "view == getkeys.keys && viewItem == key",
+          "group": "inline@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "getkeys.runTask",
+          "when": "isWorkspaceTrusted"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "getkeys",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Shell command to run with keys injected as environment variables."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GetKeys groups whose keys are injected."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "getkeys:// references of individual keys to inject."
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

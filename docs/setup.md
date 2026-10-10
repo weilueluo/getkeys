@@ -67,4 +67,4 @@ The callback consumes its state once. The desktop's separate random claim secret
 
 ## Distribution
 
-The initial marketplace is bundled and curated. `getkeys marketplace <https-base-url/> <new-directory>` downloads and verifies a signed catalog, then `GETKEYS_REGISTRY` selects that catalog on the next launch. The trust root stays compiled into the host. Provider updates that add hosts, authentication modes, or operations require review; active rotations block provider updates.
+The initial marketplace is bundled and curated. `GETKEYS_REGISTRY` selects another signed catalog directory on the next launch; it is verified against the trust root compiled into the host. Provider updates that add hosts, authentication modes, or operations require review; active rotations block provider updates.

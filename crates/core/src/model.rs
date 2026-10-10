@@ -230,6 +230,9 @@ pub struct Snapshot {
     pub activity: Vec<Activity>,
     /// Where the encrypted vault file lives.
     pub vault_path: String,
+    /// Folders whose `.env` files are scanned for keys.
+    #[serde(default)]
+    pub project_folders: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

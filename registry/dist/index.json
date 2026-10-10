@@ -2,6 +2,86 @@
   "packages": [
     {
       "manifest": {
+        "id": "official.anthropic",
+        "name": "Anthropic",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Connect with an Admin API key to see, disable and archive your organization's Claude API keys.",
+        "homepage": "https://www.anthropic.com",
+        "kind": "managed",
+        "category": "ai",
+        "hosts": [
+          "api.anthropic.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "validate_credential",
+          "deactivate_credential",
+          "revoke_credential",
+          "guide"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "sk-ant-api03-…",
+            "required": true,
+            "secret": true,
+            "env": "ANTHROPIC_API_KEY"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Admin API key",
+            "placeholder": "sk-ant-admin01-…",
+            "required": true,
+            "secret": true,
+            "env": "ANTHROPIC_ADMIN_KEY"
+          }
+        ],
+        "token_page": "https://console.anthropic.com/settings/admin-keys",
+        "account_credentials": false,
+        "key_pattern": "^sk-ant-(api|admin)\\d\\d-[A-Za-z0-9_-]{20,}$",
+        "validate": {
+          "url": "https://api.anthropic.com/v1/models",
+          "header": "x-api-key",
+          "prefix": "",
+          "field": "token",
+          "headers": {
+            "anthropic-version": "2023-06-01"
+          }
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "ANTHROPIC_ADMIN_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "ANTHROPIC_API_KEY"
+          }
+        ]
+      },
+      "wasm": "official.anthropic-0.1.0.wasm",
+      "sha256": "8c416cdef5a3c4841116c9d31515dd4fa3138a9e15bd4defb0efd450f4015bc6"
+    },
+    {
+      "manifest": {
         "id": "official.aws",
         "name": "AWS",
         "publisher": "getkeys",
@@ -141,7 +221,349 @@
         ]
       },
       "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "b821efb5a1d3b0ffaf393a550a99e724c909aadbacefc26bbb868e8c194959b4"
+      "sha256": "f05e527901d7a7b13e2111beb810dad5772cc246a7d4a4f4d39131e3b8600c94"
+    },
+    {
+      "manifest": {
+        "id": "official.cloudflare",
+        "name": "Cloudflare",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "List, roll and delete your Cloudflare user API tokens.",
+        "homepage": "https://www.cloudflare.com",
+        "kind": "managed",
+        "category": "cloud",
+        "hosts": [
+          "api.cloudflare.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_credentials",
+          "validate_credential",
+          "rotate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API token",
+            "placeholder": "Paste the token value",
+            "required": true,
+            "secret": true,
+            "env": "CLOUDFLARE_API_TOKEN"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "API token with User Details Read and API Tokens Write",
+            "placeholder": "Paste the token",
+            "required": true,
+            "secret": true,
+            "env": "CLOUDFLARE_API_TOKEN"
+          }
+        ],
+        "token_page": "https://dash.cloudflare.com/profile/api-tokens",
+        "account_credentials": true,
+        "key_pattern": "",
+        "validate": {
+          "url": "https://api.cloudflare.com/client/v4/user/tokens/verify",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "CLOUDFLARE_API_TOKEN"
+          }
+        ]
+      },
+      "wasm": "official.cloudflare-0.1.0.wasm",
+      "sha256": "cb3273ed1b3944dd26fec47c8c9e6e9aefe6388ea2bf949adf4eb31769d41d58"
+    },
+    {
+      "manifest": {
+        "id": "official.cohere",
+        "name": "Cohere",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Cohere API keys and check that they still work.",
+        "homepage": "https://cohere.com",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.cohere.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "Paste the key",
+            "required": true,
+            "secret": true,
+            "env": "CO_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://dashboard.cohere.com/api-keys",
+        "account_credentials": false,
+        "key_pattern": "",
+        "validate": {
+          "url": "https://api.cohere.com/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "CO_API_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "COHERE_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "57cae30c0d162d93db2a1f5bf7698929d4ddb246df7344fc2020a042a359d4a0"
+    },
+    {
+      "manifest": {
+        "id": "official.deepseek",
+        "name": "DeepSeek",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep DeepSeek API keys and check that they still work.",
+        "homepage": "https://www.deepseek.com",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.deepseek.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "sk-…",
+            "required": true,
+            "secret": true,
+            "env": "DEEPSEEK_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://platform.deepseek.com/api_keys",
+        "account_credentials": false,
+        "key_pattern": "^sk-[a-f0-9]{32}$",
+        "validate": {
+          "url": "https://api.deepseek.com/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "DEEPSEEK_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "05023a182f17f41297c9778598b4783987be9575bf3d1f75828230fc36725f8c"
+    },
+    {
+      "manifest": {
+        "id": "official.fireworks",
+        "name": "Fireworks AI",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Fireworks AI API keys and check that they still work.",
+        "homepage": "https://fireworks.ai",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.fireworks.ai"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "fw_…",
+            "required": true,
+            "secret": true,
+            "env": "FIREWORKS_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://app.fireworks.ai/settings/users/api-keys",
+        "account_credentials": false,
+        "key_pattern": "^fw_[A-Za-z0-9]{20,}$",
+        "validate": {
+          "url": "https://api.fireworks.ai/inference/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "firectl",
+            "label": "Fireworks CLI",
+            "role": "key",
+            "field": "token",
+            "kind": "file",
+            "paths": [
+              "~/.fireworks/auth.ini"
+            ],
+            "format": "ini",
+            "pointer": "api_key",
+            "expires_pointer": "",
+            "renew": []
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "FIREWORKS_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "8f43954c78662c6c4ee14d33f5fa53a245e37e2f41d525bf6632bb5dceaad7cb"
+    },
+    {
+      "manifest": {
+        "id": "official.gemini",
+        "name": "Gemini",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Find, create and delete Gemini API keys in your Google Cloud projects. Signs in with a gcloud access token, which lasts an hour.",
+        "homepage": "https://ai.google.dev",
+        "kind": "managed",
+        "category": "ai",
+        "hosts": [
+          "www.googleapis.com",
+          "cloudresourcemanager.googleapis.com",
+          "apikeys.googleapis.com",
+          "generativelanguage.googleapis.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "read_credential",
+          "create_credential",
+          "validate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "AIza…",
+            "required": true,
+            "secret": true,
+            "env": "GEMINI_API_KEY"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Access token from gcloud auth print-access-token",
+            "placeholder": "ya29.…",
+            "required": true,
+            "secret": true,
+            "env": ""
+          }
+        ],
+        "token_page": "https://cloud.google.com/sdk/gcloud/reference/auth/print-access-token",
+        "account_credentials": false,
+        "key_pattern": "^AIza[0-9A-Za-z_-]{35}$",
+        "validate": {
+          "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+          "header": "x-goog-api-key",
+          "prefix": "",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "gcloud",
+            "label": "Google Cloud CLI",
+            "role": "account",
+            "field": "token",
+            "kind": "command",
+            "argv": [
+              "gcloud",
+              "auth",
+              "print-access-token"
+            ]
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "GEMINI_API_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "GOOGLE_API_KEY"
+          }
+        ]
+      },
+      "wasm": "official.gemini-0.1.0.wasm",
+      "sha256": "a69c4be0c5ca7c1b24933300feba5bd38051f7210337e1afccb5aecfec8d9e16"
     },
     {
       "manifest": {
@@ -229,7 +651,656 @@
         ]
       },
       "wasm": "official.github-0.1.0.wasm",
-      "sha256": "e5a7a0916000e2921f5a2d0b44a0259f7f479339ac9f4882bd3406a03e175249"
+      "sha256": "1f952fef1b307664a13b0d72807dc2c4fd41d919b221d5488ebcf90360b15d5c"
+    },
+    {
+      "manifest": {
+        "id": "official.gitlab",
+        "name": "GitLab",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "List, rotate and revoke your GitLab.com personal access tokens.",
+        "homepage": "https://gitlab.com",
+        "kind": "managed",
+        "category": "devtools",
+        "hosts": [
+          "gitlab.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_credentials",
+          "validate_credential",
+          "rotate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Personal access token",
+            "placeholder": "glpat-…",
+            "required": true,
+            "secret": true,
+            "env": "GITLAB_TOKEN"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Personal access token with the api scope",
+            "placeholder": "glpat-…",
+            "required": true,
+            "secret": true,
+            "env": "GITLAB_TOKEN"
+          }
+        ],
+        "token_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name=GetKeys&scopes=api",
+        "account_credentials": true,
+        "key_pattern": "^glpat-[A-Za-z0-9_.-]{20,}$",
+        "validate": {
+          "url": "https://gitlab.com/api/v4/personal_access_tokens/self",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "GITLAB_TOKEN"
+          }
+        ]
+      },
+      "wasm": "official.gitlab-0.1.0.wasm",
+      "sha256": "fe781eddf57d2b449e6c378a8df418d02c6f9cd5ddcb5f7ea994db634c142cd8"
+    },
+    {
+      "manifest": {
+        "id": "official.groq",
+        "name": "Groq",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Groq API keys and check that they still work.",
+        "homepage": "https://groq.com",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.groq.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "gsk_…",
+            "required": true,
+            "secret": true,
+            "env": "GROQ_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://console.groq.com/keys",
+        "account_credentials": false,
+        "key_pattern": "^gsk_[A-Za-z0-9]{40,}$",
+        "validate": {
+          "url": "https://api.groq.com/openai/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "GROQ_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "460fa5b9fe3f75bec3888392883d6728d26d9d32bbbc70064ee3dbf876d6e7fa"
+    },
+    {
+      "manifest": {
+        "id": "official.huggingface",
+        "name": "Hugging Face",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Hugging Face access tokens and check that they still work.",
+        "homepage": "https://huggingface.co",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "huggingface.co"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Access token",
+            "placeholder": "hf_…",
+            "required": true,
+            "secret": true,
+            "env": "HF_TOKEN"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://huggingface.co/settings/tokens",
+        "account_credentials": false,
+        "key_pattern": "^hf_[A-Za-z0-9]{34}$",
+        "validate": {
+          "url": "https://huggingface.co/api/whoami-v2",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "huggingface",
+            "label": "Hugging Face CLI",
+            "role": "key",
+            "field": "token",
+            "kind": "file",
+            "paths": [
+              "{env:HF_HOME}/token",
+              "~/.cache/huggingface/token"
+            ],
+            "format": "text",
+            "pointer": "",
+            "expires_pointer": "",
+            "renew": []
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "HF_TOKEN"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "HUGGING_FACE_HUB_TOKEN"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "d1eee5e2782c449d5793cd4128f65c46169543123e855e24b10a9e59ce8e0f71"
+    },
+    {
+      "manifest": {
+        "id": "official.mistral",
+        "name": "Mistral AI",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Mistral API keys and check that they still work.",
+        "homepage": "https://mistral.ai",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.mistral.ai"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "Paste the key",
+            "required": true,
+            "secret": true,
+            "env": "MISTRAL_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://console.mistral.ai/api-keys",
+        "account_credentials": false,
+        "key_pattern": "",
+        "validate": {
+          "url": "https://api.mistral.ai/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "MISTRAL_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "71b512cf54bfa642ea35579f6c4091a8694c3dc63446e43f4b7067ef505e5453"
+    },
+    {
+      "manifest": {
+        "id": "official.openai",
+        "name": "OpenAI",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Connect with an admin key to list, create and revoke project and admin keys.",
+        "homepage": "https://openai.com",
+        "kind": "managed",
+        "category": "ai",
+        "hosts": [
+          "api.openai.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "create_credential",
+          "validate_credential",
+          "revoke_credential",
+          "guide"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "sk-proj-…",
+            "required": true,
+            "secret": true,
+            "env": "OPENAI_API_KEY"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Admin key",
+            "placeholder": "sk-admin-…",
+            "required": true,
+            "secret": true,
+            "env": "OPENAI_ADMIN_KEY"
+          }
+        ],
+        "token_page": "https://platform.openai.com/settings/organization/admin-keys",
+        "account_credentials": false,
+        "key_pattern": "^sk-((proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})$",
+        "validate": {
+          "url": "https://api.openai.com/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "OPENAI_ADMIN_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "OPENAI_API_KEY"
+          }
+        ]
+      },
+      "wasm": "official.openai-0.1.0.wasm",
+      "sha256": "d023e448061b089e8637e59e8d7c3aceac7ad237466c62e67a0415d4b8a450b1"
+    },
+    {
+      "manifest": {
+        "id": "official.openrouter",
+        "name": "OpenRouter",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Connect with a management key to list, create, disable and delete API keys.",
+        "homepage": "https://openrouter.ai",
+        "kind": "managed",
+        "category": "ai",
+        "hosts": [
+          "openrouter.ai"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "create_credential",
+          "validate_credential",
+          "deactivate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "sk-or-v1-…",
+            "required": true,
+            "secret": true,
+            "env": "OPENROUTER_API_KEY"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Management key",
+            "placeholder": "sk-or-v1-…",
+            "required": true,
+            "secret": true,
+            "env": "OPENROUTER_MANAGEMENT_KEY"
+          }
+        ],
+        "token_page": "https://openrouter.ai/settings/management-keys",
+        "account_credentials": false,
+        "key_pattern": "^sk-or-v1-[a-f0-9]{64}$",
+        "validate": {
+          "url": "https://openrouter.ai/api/v1/key",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "OPENROUTER_MANAGEMENT_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "OPENROUTER_API_KEY"
+          }
+        ]
+      },
+      "wasm": "official.openrouter-0.1.0.wasm",
+      "sha256": "8ea2a3dd722359bae9a1a7cd72200c1e8577e802dade869bc1faf56655b86393"
+    },
+    {
+      "manifest": {
+        "id": "official.perplexity",
+        "name": "Perplexity",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Perplexity API keys and check that they still work.",
+        "homepage": "https://www.perplexity.ai",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.perplexity.ai"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "pplx-…",
+            "required": true,
+            "secret": true,
+            "env": "PERPLEXITY_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://www.perplexity.ai/account/api/keys",
+        "account_credentials": false,
+        "key_pattern": "^pplx-[A-Za-z0-9]{40,}$",
+        "validate": {
+          "url": "https://api.perplexity.ai/v1/skills",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "PERPLEXITY_API_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "PPLX_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "8ac1c42daa19d06849b5aaecc511d425ce7eed5974e0fae3d56b0bcdbbca6289"
+    },
+    {
+      "manifest": {
+        "id": "official.replicate",
+        "name": "Replicate",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Replicate API tokens and check that they still work.",
+        "homepage": "https://replicate.com",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.replicate.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API token",
+            "placeholder": "r8_…",
+            "required": true,
+            "secret": true,
+            "env": "REPLICATE_API_TOKEN"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://replicate.com/account/api-tokens",
+        "account_credentials": false,
+        "key_pattern": "^r8_[A-Za-z0-9]{37}$",
+        "validate": {
+          "url": "https://api.replicate.com/v1/account",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "REPLICATE_API_TOKEN"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "1da18222599596c751e0020619484dd594ccc9c92cf1d7bf6a5529e2916e0a73"
+    },
+    {
+      "manifest": {
+        "id": "official.resend",
+        "name": "Resend",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Resend API keys and check that they still work.",
+        "homepage": "https://resend.com",
+        "kind": "declarative",
+        "category": "email",
+        "hosts": [
+          "api.resend.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "re_…",
+            "required": true,
+            "secret": true,
+            "env": "RESEND_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://resend.com/api-keys",
+        "account_credentials": false,
+        "key_pattern": "^re_[A-Za-z0-9_]{20,}$",
+        "validate": {
+          "url": "https://api.resend.com/domains",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "RESEND_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "2caf5124cb99a518d92189950df80b88d66d3be1ff9c5cb9b67f45612ca3db0a"
+    },
+    {
+      "manifest": {
+        "id": "official.stripe",
+        "name": "Stripe",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Stripe secret and restricted keys and check that they still work.",
+        "homepage": "https://stripe.com",
+        "kind": "declarative",
+        "category": "payments",
+        "hosts": [
+          "api.stripe.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Secret key",
+            "placeholder": "sk_live_…",
+            "required": true,
+            "secret": true,
+            "env": "STRIPE_SECRET_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://dashboard.stripe.com/apikeys",
+        "account_credentials": false,
+        "key_pattern": "^(sk|rk)_(live|test)_[A-Za-z0-9]{20,}$",
+        "validate": {
+          "url": "https://api.stripe.com/v1/balance",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "stripe_cli",
+            "label": "Stripe CLI (test mode)",
+            "role": "key",
+            "field": "token",
+            "kind": "file",
+            "paths": [
+              "{env:XDG_CONFIG_HOME}/stripe/config.toml",
+              "~/.config/stripe/config.toml"
+            ],
+            "format": "toml",
+            "pointer": "/default/test_mode_api_key",
+            "expires_pointer": "",
+            "renew": []
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "STRIPE_SECRET_KEY"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "STRIPE_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "d2edb3806a48eef32effdf906bb05b11656a53e692a18f1817517ba7167f7bc8"
     },
     {
       "manifest": {
@@ -337,7 +1408,60 @@
         ]
       },
       "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "0dfc63009b1064624026b325ad4949312488e062aabfc57c50c1c4e5cb2db9e4"
+      "sha256": "edafee8b1aa42218d093f3e9f3f716002d2d19da2de4b46c5fe1716cd8f97c8a"
+    },
+    {
+      "manifest": {
+        "id": "official.together",
+        "name": "Together AI",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep Together AI API keys and check that they still work.",
+        "homepage": "https://www.together.ai",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.together.xyz"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "tgp_v1_…",
+            "required": true,
+            "secret": true,
+            "env": "TOGETHER_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://api.together.ai/settings/api-keys",
+        "account_credentials": false,
+        "key_pattern": "^tgp_v1_[A-Za-z0-9_-]{30,}$",
+        "validate": {
+          "url": "https://api.together.xyz/v1/models",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "TOGETHER_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "a38614b702db967b37b580e082918a3dca924f90f131541211b70fe057771b1f"
     },
     {
       "manifest": {
@@ -432,7 +1556,60 @@
         ]
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "1241da3e8787fc2ee43f374574584ba5d817911b578145a2bcc9f7262485823c"
+      "sha256": "d6c60a51fbd23d341a003bff53d3e86f686dbc470fbe1353b0749cb61469e79e"
+    },
+    {
+      "manifest": {
+        "id": "official.xai",
+        "name": "xAI",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Keep xAI Grok API keys and check that they still work.",
+        "homepage": "https://x.ai",
+        "kind": "declarative",
+        "category": "ai",
+        "hosts": [
+          "api.x.ai"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "xai-…",
+            "required": true,
+            "secret": true,
+            "env": "XAI_API_KEY"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://console.x.ai",
+        "account_credentials": false,
+        "key_pattern": "^xai-[A-Za-z0-9]{40,}$",
+        "validate": {
+          "url": "https://api.x.ai/v1/api-key",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "XAI_API_KEY"
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "53e11f068c69ca7ff38560ccbd478452074493b6ecdc70e77e23a52005e05e5a"
     }
   ]
 }

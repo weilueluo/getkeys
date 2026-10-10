@@ -1,0 +1,34 @@
+{
+  "id": "official.huggingface",
+  "name": "Hugging Face",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Hugging Face access tokens and check that they still work.",
+  "homepage": "https://huggingface.co",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["huggingface.co"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "Access token",
+      "placeholder": "hf_…",
+      "required": true,
+      "env": "HF_TOKEN"
+    }
+  ],
+  "token_page": "https://huggingface.co/settings/tokens",
+  "key_pattern": "^hf_[A-Za-z0-9]{34}$",
+  "validate": { "url": "https://huggingface.co/api/whoami-v2" },
+  "sources": [
+    {
+      "id": "huggingface",
+      "label": "Hugging Face CLI",
+      "kind": "file",
+      "role": "key",
+      "paths": ["{env:HF_HOME}/token", "~/.cache/huggingface/token"]
+    },
+    { "kind": "env", "var": "HF_TOKEN", "role": "key" },
+    { "kind": "env", "var": "HUGGING_FACE_HUB_TOKEN", "role": "key" }
+  ]
+}

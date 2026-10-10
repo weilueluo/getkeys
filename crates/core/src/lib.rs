@@ -1,10 +1,14 @@
+pub mod agents;
 pub mod app;
 pub mod auth;
 pub mod commands;
 pub mod discover;
+pub mod endpoint;
 pub mod http;
 pub mod model;
 pub mod plugins;
+pub mod prefs;
+pub mod projects;
 pub mod rotation;
 pub mod vault;
 pub use app::App;

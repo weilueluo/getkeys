@@ -1,6 +1,6 @@
 {
   "name": "@getkeys/desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,6 +14,7 @@
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-autostart": "^2.7.0",
     "lucide-react": "^0.468.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

@@ -9,6 +9,8 @@ jobs:
     uses: ./.github/workflows/ci.yml
   live:
     needs: checks
+    # Runs only once the live-sandbox environment is configured (see docs/live-tests.md).
+    if: vars.GETKEYS_LIVE_ENABLED == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     environment: live-sandbox
@@ -45,6 +47,7 @@ jobs:
       - run: npm run test:live
   package:
     needs: [checks, live]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.live.result != 'failure' }}
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -64,11 +67,15 @@ jobs:
           'PERL=C:\Strawberry\perl\bin\perl.exe' >> $env:GITHUB_ENV
       - run: npm ci
       - run: npm run desktop -- build
-      - name: Publish the tested installer and signed marketplace
+      - run: npm run extensions:build
+      - name: Publish the tested installer, CLI, extensions and signed marketplace
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $files = @(Get-ChildItem target/release/bundle/nsis/*.exe | ForEach-Object FullName)
+          $files += (Resolve-Path target/release/getkeys.exe).Path
+          $files += (Resolve-Path extensions/browser/getkeys-browser.zip).Path
+          $files += (Resolve-Path extensions/vscode/getkeys.vsix).Path
           $files += @(Get-ChildItem registry/dist/* | ForEach-Object FullName)
           gh release create $env:GITHUB_REF_NAME @files --generate-notes

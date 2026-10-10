@@ -6,6 +6,7 @@ use crate::{
     model::*,
     new_id,
     plugins::Registry,
+    projects,
     vault::Vault,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -114,7 +115,31 @@ impl App {
             rotations: self.vault.rotations()?,
             activity,
             vault_path: self.vault.path().display().to_string(),
+            project_folders: self.project_folders(),
         })
+    }
+    fn project_folders(&self) -> Vec<String> {
+        self.vault
+            .get("setting", "project_folders")
+            .unwrap_or_default()
+    }
+    /// Chooses the folders whose `.env` files Refresh looks through for keys.
+    pub fn set_project_folders(&self, folders: Vec<String>) -> Result<Vec<String>> {
+        let mut folders: Vec<String> = folders
+            .into_iter()
+            .map(|f| f.trim().to_owned())
+            .filter(|f| !f.is_empty())
+            .collect();
+        folders.sort();
+        folders.dedup();
+        for f in &folders {
+            ensure!(
+                PathBuf::from(f).is_dir(),
+                "{f} isn't a folder on this device"
+            );
+        }
+        self.vault.put("setting", "project_folders", &folders)?;
+        Ok(folders)
     }
     /// Every provider's manifest, as installed when it is.
     pub fn manifests(&self) -> Vec<Manifest> {
@@ -274,6 +299,13 @@ impl App {
             .collect())
     }
     pub fn connect_local(&self, source: &str, existing: Option<&str>) -> Result<AuthProgress> {
+        if projects::is_project(source) {
+            let (plugin_id, name, value) = projects::load(&self.manifests(), source)?;
+            self.ensure_installed(&plugin_id)?;
+            return Ok(AuthProgress::KeySaved {
+                credential: Box::new(self.save_found(&plugin_id, source, &name, value)?),
+            });
+        }
         let (plugin_id, found) = discover::load(&self.manifests(), source)?;
         self.ensure_installed(&plugin_id)?;
         let id = existing.map_or_else(new_id, |id| Ok(id.to_owned()))?;
@@ -290,7 +322,12 @@ impl App {
                 self.save_connection(&id, plugin_id, BTreeMap::new(), *auth, Some(source.into()))
             }
             Found::Key(value) => Ok(AuthProgress::KeySaved {
-                credential: Box::new(self.save_found(&plugin_id, source, value)?),
+                credential: Box::new(self.save_found(
+                    &plugin_id,
+                    source,
+                    &discover::sign_in_name(&self.manifests(), Some(source)),
+                    value,
+                )?),
             }),
         }
     }
@@ -299,16 +336,16 @@ impl App {
         &self,
         plugin_id: &str,
         source: &str,
+        name: &str,
         value: SecretValue,
     ) -> Result<CredentialView> {
         let id = format!("found:{source}");
-        let name = discover::sign_in_name(&self.manifests(), Some(source));
         let previous = self.vault.get::<Credential>("credential", &id).ok();
         ensure!(
             previous.as_ref().is_none_or(|p| !p.view.retired),
             "This key was deleted from GetKeys"
         );
-        self.store_key(&id, plugin_id, &name, value, previous)
+        self.store_key(&id, plugin_id, name, value, previous)
     }
     fn store_key(
         &self,
@@ -804,18 +841,32 @@ impl App {
             })
         };
         let manifests = self.manifests();
-        Ok(discover::scan(&manifests)
+        let fresh = |d: &Discovery, value: &SecretValue| {
+            new_key(&credentials, &format!("found:{}", d.id), value)
+        };
+        // The same key is often in several places; it is offered once.
+        let mut seen = Vec::new();
+        let mut found: Vec<Discovery> = discover::scan(&manifests)
             .into_iter()
             .filter(|d| wanted(d) && (d.key || !known(&d.id)))
             .filter(|d| match discover::load(&manifests, &d.id) {
                 // Browser sign-ins (IAM Identity Center) need the person, so they stay in Connect.
                 Ok((_, Found::Material(_))) => true,
                 Ok((_, Found::Key(value))) => {
-                    new_key(&credentials, &format!("found:{}", d.id), &value)
+                    let new = fresh(d, &value) && !seen.contains(&value.fields);
+                    seen.push(value.fields);
+                    new
                 }
                 _ => false,
             })
-            .collect())
+            .collect();
+        for (d, value) in projects::scan(&self.project_folders(), &manifests) {
+            if wanted(&d) && fresh(&d, &value) && !seen.contains(&value.fields) {
+                seen.push(value.fields);
+                found.push(d);
+            }
+        }
+        Ok(found)
     }
     /// Text to put on the clipboard: one field's value, or every exported field as `.env` lines.
     pub fn clip(&self, id: &str, field: &str) -> Result<String> {
@@ -883,6 +934,24 @@ impl App {
         self.vault
             .event("keys.exported", &format!("{} values", lines.len()))?;
         Ok(out)
+    }
+    /// The chosen fields' values by variable name, for a program started with them.
+    pub fn resolve(&self, lines: &[EnvLine]) -> Result<BTreeMap<String, String>> {
+        let mut values = BTreeMap::new();
+        for line in lines {
+            ensure!(
+                valid_variable(&line.variable) && line.field != DOTENV,
+                "{} isn't a valid variable name",
+                line.variable
+            );
+            let value = self.clip(&line.credential_id, &line.field)?;
+            ensure!(
+                values.insert(line.variable.clone(), value).is_none(),
+                "{} is used by two keys. Rename one of them.",
+                line.variable
+            );
+        }
+        Ok(values)
     }
     /// Asks the provider whether the key still works. Only a rejection marks it invalid; a
     /// network failure leaves it as it was.
@@ -1912,5 +1981,103 @@ mod tests {
         assert_eq!(dotenv_value("a b\"c"), "\"a b\\\"c\"");
         assert_eq!(label("account_id"), "Account ID");
         assert_eq!(label("project_url"), "Project URL");
+    }
+    #[test]
+    fn provider_keys_are_found_rotated_by_hand_and_removed_with_their_provider() {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        use ed25519_dalek::{Signer, SigningKey};
+        use sha2::Digest;
+        const VAR: &str = "GETKEYS_TEST_ACME_KEY";
+        let dir = tempfile::tempdir().unwrap();
+        let manifest: Manifest = serde_json::from_value(serde_json::json!({
+            "id": "test.acme", "name": "Acme", "publisher": "t", "version": "1", "description": "",
+            "homepage": "https://acme.dev", "kind": "declarative", "hosts": ["acme.dev"],
+            "token_page": "https://acme.dev/keys",
+            "credential_fields": [{"key": "token", "label": "API key", "required": true}],
+            "sources": [{"kind": "env", "var": VAR, "role": "key"}]
+        }))
+        .unwrap();
+        let sha256 = hex::encode(sha2::Sha256::digest(crate::plugins::manifest_bytes(
+            &manifest,
+        )));
+        let index = serde_json::to_vec(&crate::plugins::Catalog {
+            packages: vec![crate::plugins::Package {
+                manifest,
+                wasm: String::new(),
+                sha256,
+            }],
+        })
+        .unwrap();
+        let signing = SigningKey::from_bytes(&[7; 32]);
+        let source = dir.path().join("registry");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("index.json"), &index).unwrap();
+        std::fs::write(
+            source.join("index.sig"),
+            STANDARD.encode(signing.sign(&index).to_bytes()),
+        )
+        .unwrap();
+        let app = App {
+            vault: Vault::open(&dir.path().join("vault.db"), &[4; 32]).unwrap(),
+            registry: Registry::with_key(
+                source,
+                dir.path().join("plugins"),
+                &hex::encode(signing.verifying_key().as_bytes()),
+            )
+            .unwrap(),
+        };
+        // SAFETY: no other test reads this variable.
+        unsafe { std::env::set_var(VAR, "acme_first") };
+        app.install("test.acme", true).unwrap();
+        let found = app.scan_sources(Some("test.acme")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].key);
+        let AuthProgress::KeySaved { credential } = app.connect_local(&found[0].id, None).unwrap()
+        else {
+            panic!("expected a saved key");
+        };
+        assert_eq!(credential.plugin_id, "test.acme");
+        assert!(credential.connection_id.is_empty());
+        assert_eq!(app.clip(&credential.id, "token").unwrap(), "acme_first");
+        // The same value isn't offered twice.
+        assert!(app.scan_sources(Some("test.acme")).unwrap().is_empty());
+        // A pasted replacement is kept apart and the place it was found stops bringing it back.
+        let rotated = app
+            .save_key(
+                Some(&credential.id),
+                "test.acme",
+                "",
+                BTreeMap::from([("token".into(), "acme_second".into())]),
+            )
+            .unwrap();
+        assert_ne!(rotated.id, credential.id);
+        assert_eq!(app.clip(&rotated.id, "token").unwrap(), "acme_second");
+        assert!(app.scan_sources(Some("test.acme")).unwrap().is_empty());
+        let manual = app
+            .save_key(
+                None,
+                "test.acme",
+                "Laptop",
+                BTreeMap::from([("token".into(), "acme_third".into())]),
+            )
+            .unwrap();
+        assert!(
+            app.save_key(None, "test.acme", "Empty", BTreeMap::new())
+                .is_err()
+        );
+        let listed = |app: &App| {
+            app.snapshot()
+                .unwrap()
+                .credentials
+                .into_iter()
+                .filter(|c| !c.retired && c.plugin_id == "test.acme")
+                .map(|c| c.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(listed(&app).len(), 2);
+        assert!(listed(&app).contains(&manual.id));
+        app.uninstall("test.acme").unwrap();
+        assert!(listed(&app).is_empty());
+        unsafe { std::env::remove_var(VAR) };
     }
 }

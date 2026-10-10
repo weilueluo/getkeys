@@ -1,0 +1,23 @@
+{
+  "id": "official.mistral",
+  "name": "Mistral AI",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Mistral API keys and check that they still work.",
+  "homepage": "https://mistral.ai",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.mistral.ai"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "Paste the key",
+      "required": true,
+      "env": "MISTRAL_API_KEY"
+    }
+  ],
+  "token_page": "https://console.mistral.ai/api-keys",
+  "validate": { "url": "https://api.mistral.ai/v1/models" },
+  "sources": [{ "kind": "env", "var": "MISTRAL_API_KEY", "role": "key" }]
+}

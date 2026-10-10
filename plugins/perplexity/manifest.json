@@ -1,0 +1,27 @@
+{
+  "id": "official.perplexity",
+  "name": "Perplexity",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Perplexity API keys and check that they still work.",
+  "homepage": "https://www.perplexity.ai",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.perplexity.ai"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "pplx-…",
+      "required": true,
+      "env": "PERPLEXITY_API_KEY"
+    }
+  ],
+  "token_page": "https://www.perplexity.ai/account/api/keys",
+  "key_pattern": "^pplx-[A-Za-z0-9]{40,}$",
+  "validate": { "url": "https://api.perplexity.ai/v1/skills" },
+  "sources": [
+    { "kind": "env", "var": "PERPLEXITY_API_KEY", "role": "key" },
+    { "kind": "env", "var": "PPLX_API_KEY", "role": "key" }
+  ]
+}

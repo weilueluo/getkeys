@@ -1,0 +1,24 @@
+{
+  "id": "official.replicate",
+  "name": "Replicate",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Replicate API tokens and check that they still work.",
+  "homepage": "https://replicate.com",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.replicate.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API token",
+      "placeholder": "r8_…",
+      "required": true,
+      "env": "REPLICATE_API_TOKEN"
+    }
+  ],
+  "token_page": "https://replicate.com/account/api-tokens",
+  "key_pattern": "^r8_[A-Za-z0-9]{37}$",
+  "validate": { "url": "https://api.replicate.com/v1/account" },
+  "sources": [{ "kind": "env", "var": "REPLICATE_API_TOKEN", "role": "key" }]
+}

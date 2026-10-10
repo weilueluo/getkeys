@@ -1,0 +1,24 @@
+{
+  "id": "official.groq",
+  "name": "Groq",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Groq API keys and check that they still work.",
+  "homepage": "https://groq.com",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.groq.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "gsk_…",
+      "required": true,
+      "env": "GROQ_API_KEY"
+    }
+  ],
+  "token_page": "https://console.groq.com/keys",
+  "key_pattern": "^gsk_[A-Za-z0-9]{40,}$",
+  "validate": { "url": "https://api.groq.com/openai/v1/models" },
+  "sources": [{ "kind": "env", "var": "GROQ_API_KEY", "role": "key" }]
+}

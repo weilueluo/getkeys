@@ -1,0 +1,24 @@
+{
+  "id": "official.resend",
+  "name": "Resend",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Resend API keys and check that they still work.",
+  "homepage": "https://resend.com",
+  "kind": "declarative",
+  "category": "email",
+  "hosts": ["api.resend.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "re_…",
+      "required": true,
+      "env": "RESEND_API_KEY"
+    }
+  ],
+  "token_page": "https://resend.com/api-keys",
+  "key_pattern": "^re_[A-Za-z0-9_]{20,}$",
+  "validate": { "url": "https://api.resend.com/domains" },
+  "sources": [{ "kind": "env", "var": "RESEND_API_KEY", "role": "key" }]
+}

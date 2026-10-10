@@ -1,0 +1,24 @@
+{
+  "id": "official.together",
+  "name": "Together AI",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep Together AI API keys and check that they still work.",
+  "homepage": "https://www.together.ai",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.together.xyz"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "tgp_v1_…",
+      "required": true,
+      "env": "TOGETHER_API_KEY"
+    }
+  ],
+  "token_page": "https://api.together.ai/settings/api-keys",
+  "key_pattern": "^tgp_v1_[A-Za-z0-9_-]{30,}$",
+  "validate": { "url": "https://api.together.xyz/v1/models" },
+  "sources": [{ "kind": "env", "var": "TOGETHER_API_KEY", "role": "key" }]
+}

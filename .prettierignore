@@ -8,3 +8,5 @@ apps/desktop/src-tauri/icons/
 artifacts/
 playwright-report/
 test-results/
+extensions/*/dist/
+extensions/package-lock.json

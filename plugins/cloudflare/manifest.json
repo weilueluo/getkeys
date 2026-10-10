@@ -1,0 +1,40 @@
+{
+  "id": "official.cloudflare",
+  "name": "Cloudflare",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "List, roll and delete your Cloudflare user API tokens.",
+  "homepage": "https://www.cloudflare.com",
+  "category": "cloud",
+  "hosts": ["api.cloudflare.com"],
+  "operations": [
+    "identity",
+    "list_credentials",
+    "validate_credential",
+    "rotate_credential",
+    "revoke_credential"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API token",
+      "placeholder": "Paste the token value",
+      "required": true,
+      "env": "CLOUDFLARE_API_TOKEN"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "API token with User Details Read and API Tokens Write",
+      "placeholder": "Paste the token",
+      "required": true,
+      "env": "CLOUDFLARE_API_TOKEN"
+    }
+  ],
+  "token_page": "https://dash.cloudflare.com/profile/api-tokens",
+  "account_credentials": true,
+  "validate": { "url": "https://api.cloudflare.com/client/v4/user/tokens/verify" },
+  "sources": [{ "kind": "env", "var": "CLOUDFLARE_API_TOKEN" }]
+}

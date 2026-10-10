@@ -2,11 +2,13 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signer, SigningKey};
 use getkeys_core::{
+    agents::{AgentClient, AgentInfo},
     api::*,
     commands::Command,
     discover::Discovery,
     model::*,
     plugins::{Catalog, Package, verify_catalog},
+    prefs::Prefs,
 };
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
@@ -51,7 +53,21 @@ fn main() -> Result<()> {
             println!("Marketplace signature and all plugin artifacts verified.");
         }
         Some("types") => types()?,
-        _ => bail!("Usage: cargo run -p xtask -- <init-signing|package|verify|types|live>"),
+        Some("new-provider") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            let declarative = args.iter().any(|a| a == "--declarative");
+            let [id] = args
+                .iter()
+                .filter(|a| !a.starts_with("--"))
+                .collect::<Vec<_>>()[..]
+            else {
+                bail!("Usage: cargo run -p xtask -- new-provider <id> [--declarative]");
+            };
+            new_provider(id, declarative)?;
+        }
+        _ => bail!(
+            "Usage: cargo run -p xtask -- <init-signing|package|verify|types|live|new-provider <id> [--declarative]>"
+        ),
     }
     Ok(())
 }
@@ -127,6 +143,185 @@ fn package() -> Result<()> {
     println!("Packaged and signed provider plugins.");
     Ok(())
 }
+/// Scaffolds `plugins/<id>`: a manifest, plus a Rust plugin crate for managed providers.
+fn new_provider(id: &str, declarative: bool) -> Result<()> {
+    ensure!(
+        !id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && !id.starts_with('-'),
+        "Provider IDs use lowercase letters, digits and hyphens"
+    );
+    let dir = Path::new("plugins").join(id);
+    ensure!(!dir.exists(), "plugins/{id} already exists");
+    let name: String = id
+        .split('-')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let env = format!("{}_API_KEY", id.to_uppercase().replace('-', "_"));
+    let host = format!("api.{id}.com");
+    let (kind, managed) = if declarative {
+        ("declarative", String::new())
+    } else {
+        ("managed", MANAGED_FIELDS.replace("{name}", &name))
+    };
+    let manifest = MANIFEST_TEMPLATE
+        .replace("{id}", id)
+        .replace("{name}", &name)
+        .replace("{kind}", kind)
+        .replace("{managed}", &managed)
+        .replace("{host}", &host)
+        .replace("{env}", &env);
+    let parsed: Manifest = serde_json::from_str(&manifest)?;
+    getkeys_core::plugins::validate_manifest(&parsed)?;
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join("manifest.json"), manifest)?;
+    if declarative {
+        println!("Created plugins/{id}/manifest.json. See docs/providers.md.");
+        return Ok(());
+    }
+    fs::write(
+        dir.join("Cargo.toml"),
+        fs::read_to_string("plugins/github/Cargo.toml")?
+            .replace("getkeys-plugin-github", &format!("getkeys-plugin-{id}")),
+    )?;
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(
+        dir.join("src/lib.rs"),
+        PLUGIN_TEMPLATE
+            .replace("{name}", &name)
+            .replace("{host}", &host),
+    )?;
+    // Best effort: the template's line breaks depend on the provider name's length.
+    let _ = std::process::Command::new("rustfmt")
+        .args(["--edition", "2024"])
+        .arg(dir.join("src/lib.rs"))
+        .status();
+    let mut cargo = fs::read_to_string("Cargo.toml")?;
+    let start = cargo
+        .find("\nmembers = [")
+        .context("Workspace members not found in Cargo.toml")?;
+    let end = start
+        + cargo[start..]
+            .find(']')
+            .context("Workspace members are malformed")?;
+    cargo.insert_str(end, &format!(", \"plugins/{id}\""));
+    fs::write("Cargo.toml", cargo)?;
+    println!(
+        "Created plugins/{id} and added it to the workspace. Run cargo test -p getkeys-plugin-{id}, then npm run plugins:build. See docs/providers.md."
+    );
+    Ok(())
+}
+const MANIFEST_TEMPLATE: &str = r#"{
+  "id": "official.{id}",
+  "name": "{name}",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep {name} API keys and check that they still work.",
+  "homepage": "https://{id}.com",
+  "kind": "{kind}",
+  "category": "ai",
+  "hosts": ["{host}"],{managed}
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "Paste the key",
+      "required": true,
+      "env": "{env}"
+    }
+  ],
+  "token_page": "https://{id}.com/settings/api-keys",
+  "key_pattern": "",
+  "validate": { "url": "https://{host}/v1/models" },
+  "sources": [{ "kind": "env", "var": "{env}", "role": "key" }]
+}
+"#;
+const MANAGED_FIELDS: &str = r#"
+  "operations": ["identity", "validate_credential"],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "{name} management key",
+      "placeholder": "Paste the key",
+      "required": true
+    }
+  ],"#;
+const PLUGIN_TEMPLATE: &str = r#"use getkeys_plugin_api::*;
+use serde_json::Value;
+pub const MANIFEST: &str = include_str!("../manifest.json");
+
+pub fn handle(call: Call) -> Step {
+    execute(call)
+        .unwrap_or_else(|_| error("invalid_response", "{name} returned an unexpected response."))
+}
+
+fn execute(call: Call) -> Result<Step, &'static str> {
+    if let Some(response) = &call.response {
+        if let Some(error) = provider_error(response) {
+            return Ok(error);
+        }
+        if matches!(call.operation, Operation::ValidateCredential { .. }) {
+            return Ok(done(Outcome::Done));
+        }
+        let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
+        return Ok(match call.operation {
+            Operation::Identity => done(Outcome::Identity(Identity {
+                id: v["id"].as_str().ok_or("id")?.into(),
+                name: v["name"].as_str().ok_or("name")?.into(),
+            })),
+            _ => error("unsupported", "This {name} operation is unavailable."),
+        });
+    }
+    let req = match call.operation {
+        Operation::Identity => get("https://{host}/v1/me".into()),
+        Operation::ValidateCredential { .. } => {
+            let mut r = get("https://{host}/v1/models".into());
+            r.auth = RequestAuth::Candidate;
+            r
+        }
+        _ => return Ok(error("unsupported", "This {name} operation is unavailable.")),
+    };
+    Ok(request(req, Value::Null))
+}
+#[cfg(target_arch = "wasm32")]
+#[extism_pdk::plugin_fn]
+pub fn describe() -> extism_pdk::FnResult<String> {
+    Ok(MANIFEST.into())
+}
+#[cfg(target_arch = "wasm32")]
+#[extism_pdk::plugin_fn]
+pub fn run(call: extism_pdk::Json<Call>) -> extism_pdk::FnResult<extism_pdk::Json<Step>> {
+    Ok(extism_pdk::Json(handle(call.0)))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    #[test]
+    fn identity_reads_the_account() {
+        let step = handle(Call {
+            operation: Operation::Identity,
+            config: BTreeMap::new(),
+            cursor: Value::Null,
+            response: Some(HttpResponse {
+                status: 200,
+                body: json!({"id": "acct_1", "name": "Ada"}).to_string(),
+                headers: BTreeMap::new(),
+            }),
+        });
+        assert!(matches!(step, Step::Complete { result: Outcome::Identity(i) } if i.id == "acct_1"));
+    }
+}
+"#;
 fn types() -> Result<()> {
     let cfg = ts_rs::Config::default().with_large_int("number");
     let declarations = [
@@ -159,6 +354,9 @@ fn types() -> Result<()> {
         ImportInput::decl(&cfg),
         EnvLine::decl(&cfg),
         CustomField::decl(&cfg),
+        Prefs::decl(&cfg),
+        AgentClient::decl(&cfg),
+        AgentInfo::decl(&cfg),
         Command::decl(&cfg),
     ];
     let mut output = String::from("// Generated by cargo run -p xtask -- types.\n");

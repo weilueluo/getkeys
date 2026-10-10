@@ -1,0 +1,59 @@
+{
+  "id": "official.gemini",
+  "name": "Gemini",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Find, create and delete Gemini API keys in your Google Cloud projects. Signs in with a gcloud access token, which lasts an hour.",
+  "homepage": "https://ai.google.dev",
+  "category": "ai",
+  "hosts": [
+    "www.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "apikeys.googleapis.com",
+    "generativelanguage.googleapis.com"
+  ],
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "read_credential",
+    "create_credential",
+    "validate_credential",
+    "revoke_credential"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "AIza…",
+      "required": true,
+      "env": "GEMINI_API_KEY"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Access token from gcloud auth print-access-token",
+      "placeholder": "ya29.…",
+      "required": true
+    }
+  ],
+  "token_page": "https://cloud.google.com/sdk/gcloud/reference/auth/print-access-token",
+  "key_pattern": "^AIza[0-9A-Za-z_-]{35}$",
+  "validate": {
+    "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
+    "header": "x-goog-api-key",
+    "prefix": ""
+  },
+  "sources": [
+    {
+      "id": "gcloud",
+      "label": "Google Cloud CLI",
+      "kind": "command",
+      "argv": ["gcloud", "auth", "print-access-token"]
+    },
+    { "kind": "env", "var": "GEMINI_API_KEY", "role": "key" },
+    { "kind": "env", "var": "GOOGLE_API_KEY", "role": "key" }
+  ]
+}

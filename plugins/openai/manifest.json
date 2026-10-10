@@ -1,0 +1,45 @@
+{
+  "id": "official.openai",
+  "name": "OpenAI",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Connect with an admin key to list, create and revoke project and admin keys.",
+  "homepage": "https://openai.com",
+  "category": "ai",
+  "hosts": ["api.openai.com"],
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "create_credential",
+    "validate_credential",
+    "revoke_credential",
+    "guide"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "sk-proj-…",
+      "required": true,
+      "env": "OPENAI_API_KEY"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Admin key",
+      "placeholder": "sk-admin-…",
+      "required": true,
+      "env": "OPENAI_ADMIN_KEY"
+    }
+  ],
+  "token_page": "https://platform.openai.com/settings/organization/admin-keys",
+  "key_pattern": "^sk-((proj|svcacct|admin)-[A-Za-z0-9_-]{40,}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})$",
+  "validate": { "url": "https://api.openai.com/v1/models" },
+  "sources": [
+    { "kind": "env", "var": "OPENAI_ADMIN_KEY" },
+    { "kind": "env", "var": "OPENAI_API_KEY", "role": "key" }
+  ]
+}

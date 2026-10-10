@@ -74,7 +74,8 @@ test('real native IPC installs a signed plugin and uses an encrypted OS-keyed va
   await expect(page.getByRole('heading', { name: 'Providers', exact: true })).toBeVisible();
   if (test.info().project.metadata.packaged)
     expect(page.url()).toMatch(/^(http:\/\/tauri\.localhost|tauri:\/\/localhost)/);
-  await expect(page.locator('.provider-card')).toHaveCount(4);
+  const packages = JSON.parse(readFileSync('registry/dist/index.json', 'utf8')).packages;
+  await expect(page.locator('.provider-card')).toHaveCount(packages.length);
   const github = page
     .locator('.provider-card')
     .filter({ has: page.getByRole('heading', { name: 'GitHub', exact: true }) });

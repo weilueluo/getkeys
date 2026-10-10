@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUpRight,
   Check,
@@ -100,6 +100,8 @@ type Props = Controller & {
   searchField: ReactNode;
   browse: () => void;
   refreshKeys: (scope?: RefreshScope) => void;
+  /** A key to show, from a getkeys://key link. */
+  focus?: { id: string };
 };
 export function VaultPanel({
   snapshot,
@@ -109,6 +111,7 @@ export function VaultPanel({
   searchField,
   browse,
   refreshKeys,
+  focus,
 }: Props) {
   const [view, setView] = useState<View>('ready');
   const [created, setCreated] = useState(storedGroups);
@@ -248,6 +251,17 @@ export function VaultPanel({
             ?.candidate_id ?? '',
       );
   }, [retired]);
+  const focused = useRef(focus);
+  useEffect(() => {
+    const item = focus && all.find((i) => i.c.id === focus.id);
+    if (!item || focused.current === focus) return;
+    focused.current = focus;
+    setView(item.secretless ? 'empty' : 'ready');
+    setOpen(item.c.id);
+    setTimeout(() =>
+      document.querySelector('.key-item.open')?.scrollIntoView?.({ block: 'nearest' }),
+    );
+  }, [focus, snapshot]);
   const active = snapshot.connections.filter((c) => c.state !== 'disconnected');
   // Refresh covers the accounts behind the group's keys, or every account.
   const scope: RefreshScope = activeGroup
@@ -1313,7 +1327,10 @@ function PasteRotateDialog({ item, close, busy, perform }: DialogProps) {
         {fields
           .filter((f) => f.secret)
           .map((f, i) => (
-            <Field key={f.key} label={`New ${f.label.toLowerCase()}`}>
+            <Field
+              key={f.key}
+              label={`New ${/^[A-Z]{2}/.test(f.label) ? f.label : f.label.toLowerCase()}`}
+            >
               <input
                 type="password"
                 name={f.key}

@@ -17,7 +17,9 @@ const same = (source, signed) =>
       ? Array.isArray(signed[key]) &&
         value.length === signed[key].length &&
         value.every((v, i) =>
-          v && typeof v === 'object' ? same(v, signed[key][i]) : isDeepStrictEqual(v, signed[key][i]),
+          v && typeof v === 'object'
+            ? same(v, signed[key][i])
+            : isDeepStrictEqual(v, signed[key][i]),
         )
       : value && typeof value === 'object'
         ? same(value, signed[key] ?? {})
@@ -31,8 +33,10 @@ for (const name of names) {
     const bytes = readFileSync(
       `target/wasm32-unknown-unknown/release/getkeys_plugin_${name.replaceAll('-', '_')}.wasm`,
     );
-    if (createHash('sha256').update(bytes).digest('hex') !== signed.sha256) throw stale(manifest.id);
+    if (createHash('sha256').update(bytes).digest('hex') !== signed.sha256)
+      throw stale(manifest.id);
   }
 }
-if (catalog.packages.length !== names.length) throw new Error('The signed catalog lists removed providers.');
+if (catalog.packages.length !== names.length)
+  throw new Error('The signed catalog lists removed providers.');
 console.log('Signed provider bundles match the source build.');

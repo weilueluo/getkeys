@@ -1,0 +1,41 @@
+{
+  "id": "official.gitlab",
+  "name": "GitLab",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "List, rotate and revoke your GitLab.com personal access tokens.",
+  "homepage": "https://gitlab.com",
+  "category": "devtools",
+  "hosts": ["gitlab.com"],
+  "operations": [
+    "identity",
+    "list_credentials",
+    "validate_credential",
+    "rotate_credential",
+    "revoke_credential"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "Personal access token",
+      "placeholder": "glpat-…",
+      "required": true,
+      "env": "GITLAB_TOKEN"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Personal access token with the api scope",
+      "placeholder": "glpat-…",
+      "required": true,
+      "env": "GITLAB_TOKEN"
+    }
+  ],
+  "token_page": "https://gitlab.com/-/user_settings/personal_access_tokens?name=GetKeys&scopes=api",
+  "account_credentials": true,
+  "key_pattern": "^glpat-[A-Za-z0-9_.-]{20,}$",
+  "validate": { "url": "https://gitlab.com/api/v4/personal_access_tokens/self" },
+  "sources": [{ "kind": "env", "var": "GITLAB_TOKEN" }]
+}

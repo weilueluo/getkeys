@@ -17,6 +17,16 @@ import { copyCredential, request } from './bridge';
 import { inputs, Modal, PageHeader, ProviderMark, humanize, Tabs } from './ui';
 import { borrowed, COPIED, MASK, primaryField, shown, SIGN_IN, useReveal } from './secrets';
 
+const CATEGORIES: Record<string, string> = {
+  ai: 'AI',
+  devtools: 'Developer tools',
+  cloud: 'Cloud',
+  database: 'Database',
+  payments: 'Payments',
+  email: 'Email',
+};
+const categoryName = (c: string) => CATEGORIES[c] ?? humanize(c);
+
 type Actions = {
   refreshAccount: (id: string) => void;
   reconnect: (id: string) => void;
@@ -92,7 +102,7 @@ export function Marketplace({
                   <div className="provider-title">
                     <h2>{p.manifest.name}</h2>
                     {p.manifest.category && (
-                      <span className="badge subtle">{humanize(p.manifest.category)}</span>
+                      <span className="badge subtle">{categoryName(p.manifest.category)}</span>
                     )}
                     {accounts.length > 0 && (
                       <span className="badge">
@@ -154,7 +164,7 @@ export function Marketplace({
                 <div
                   className="provider-panel"
                   role="region"
-                  aria-label={`${p.manifest.name} accounts`}
+                  aria-label={`${p.manifest.name} ${declarative(p) ? 'details' : 'accounts'}`}
                 >
                   {declarative(p) && (
                     <p className="provider-note">

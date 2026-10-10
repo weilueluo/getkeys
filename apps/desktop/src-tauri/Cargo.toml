@@ -13,6 +13,12 @@ getkeys-core.workspace = true
 getkeys-plugin-api.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 arboard = { version = "3", default-features = false }
 tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-deep-link = "2"
+tauri-plugin-autostart = "2"
+percent-encoding = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+interprocess = "2.4"

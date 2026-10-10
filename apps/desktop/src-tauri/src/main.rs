@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod agent;
+mod shell;
 use getkeys_core::{App, commands::Command, model::EnvLine};
 use std::{
     path::PathBuf,
@@ -147,7 +149,16 @@ fn main() {
         context
     };
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(shell::second_instance))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .arg(shell::HIDDEN)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(shell::window_event)
         .setup(|app| {
             let registry = std::env::var_os("GETKEYS_REGISTRY")
                 .map(PathBuf::from)
@@ -169,12 +180,15 @@ fn main() {
                 .and_then(|data| App::open(data, registry))
                 .map_err(|e| format!("{e:#}"));
             app.manage(Arc::new(Mutex::new(core)));
+            agent::start(app.handle());
+            shell::setup(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             request,
             copy_credential,
-            export_env
+            export_env,
+            shell::shell_ready
         ])
         .run(context)
         .expect("Unable to start GetKeys");

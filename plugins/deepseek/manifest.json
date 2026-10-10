@@ -1,0 +1,24 @@
+{
+  "id": "official.deepseek",
+  "name": "DeepSeek",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Keep DeepSeek API keys and check that they still work.",
+  "homepage": "https://www.deepseek.com",
+  "kind": "declarative",
+  "category": "ai",
+  "hosts": ["api.deepseek.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "sk-…",
+      "required": true,
+      "env": "DEEPSEEK_API_KEY"
+    }
+  ],
+  "token_page": "https://platform.deepseek.com/api_keys",
+  "key_pattern": "^sk-[a-f0-9]{32}$",
+  "validate": { "url": "https://api.deepseek.com/models" },
+  "sources": [{ "kind": "env", "var": "DEEPSEEK_API_KEY", "role": "key" }]
+}
