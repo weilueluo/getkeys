@@ -2313,7 +2313,7 @@ pub(crate) mod tests {
         use base64::{Engine, engine::general_purpose::STANDARD};
         use ed25519_dalek::{Signer, SigningKey};
         use sha2::Digest;
-        const VAR: &str = "GETKEYS_TEST_ACME_KEY";
+        const VAR: &str = "GETKEYS_TEST_APP_ACME_KEY";
         let dir = tempfile::tempdir().unwrap();
         let manifest: Manifest = serde_json::from_value(serde_json::json!({
             "id": "test.acme", "name": "Acme", "publisher": "t", "version": "1", "description": "",
