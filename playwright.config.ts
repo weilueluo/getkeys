@@ -10,6 +10,8 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:1420',
     viewport: { width: 1280, height: 880 },
     trace: 'retain-on-failure',
+    // Settled styles for accessibility checks: a modal fading in fails colour contrast.
+    reducedMotion: 'reduce',
   },
   webServer: {
     command: 'npm run dev',
@@ -18,6 +20,9 @@ export default defineConfig({
   },
   projects: [
     { name: 'browser', testIgnore: 'native.spec.ts', use: { browserName: 'chromium' } },
-    { name: 'native', testMatch: 'native.spec.ts', workers: 1 },
+    // Native tests drive the app's WebView2 over CDP, which only Windows offers.
+    ...(process.platform === 'win32'
+      ? [{ name: 'native', testMatch: 'native.spec.ts', workers: 1 }]
+      : []),
   ],
 });

@@ -1,3 +1,0 @@
-{
-  "bundle": { "resources": { "../../../target/release/getkeys.exe": "bin/getkeys.exe" } }
-}

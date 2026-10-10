@@ -27,6 +27,8 @@ $env:PERL = 'C:\Strawberry\perl\bin\perl.exe'
 npm run desktop -- dev
 ```
 
+On macOS and Linux, skip Perl and the Windows tools; Linux also needs the [Tauri system packages](https://v2.tauri.app/start/prerequisites/#linux) and `libdbus-1-dev`. The vault key lives in the OS credential store: Keychain on macOS, a Secret Service such as GNOME Keyring or KWallet on Linux.
+
 The signed provider packages are included in `registry/dist`. No setup is needed to connect: GetKeys reuses the CLI sign-ins on this machine or a token you paste. Browser sign-in is optional and needs your own app registrations; see [setup](docs/setup.md). `npm run dev` alone is the UI development server; vault operations require the native app.
 
 ## Use
@@ -71,9 +73,9 @@ npm run test:packaged
 npm run test:live
 ```
 
-`check` runs formatting, signature verification, generated types, production UI build, Clippy, the full Rust test suite, UI tests, native Windows tests, browser accessibility checks, and npm audit. Live checks **fail** when sandbox configuration is missing; they never silently skip. `npm run extensions:test` and `npm run extensions:build` cover the browser and VS Code extensions. See [live-test configuration](docs/live-tests.md).
+`check` runs formatting, signature verification, generated types, production UI build, Clippy, the full Rust test suite, UI tests, native Windows tests (on Windows), browser accessibility checks, and npm audit. Provider bundle bytes are verified on Windows, where they are built and signed; on macOS the CLI journey tests are skipped because Keychain asks before a second unsigned program reads the vault key. CI runs `check` on Windows, macOS, and Linux. Live checks **fail** when sandbox configuration is missing; they never silently skip. `npm run extensions:test` and `npm run extensions:build` cover the browser and VS Code extensions. See [live-test configuration](docs/live-tests.md).
 
-CI gates releases. A `v*` tag runs CI, then the live provider checks when the repository variable `GETKEYS_LIVE_ENABLED` is `true`, then publishes the installer, the `getkeys` CLI, both extensions, and the signed marketplace. Signing the Windows installer with an OS code-signing certificate is not configured yet; marketplace signatures are separate from installer signing.
+CI gates releases. A `v*` tag runs CI, then the live provider checks when the repository variable `GETKEYS_LIVE_ENABLED` is `true`, then builds and publishes, in one release: the Windows installer and `getkeys-windows-x64.exe`; macOS `.dmg` apps and `getkeys-macos-{arm64,x64}.tar.gz`; a Linux `.AppImage`, `.deb`, and `getkeys-linux-x64.tar.gz`; both extensions; and the signed marketplace. The CLI archives hold `getkeys` with the `registry/` it reads beside it. Running Release by hand (`workflow_dispatch`) is a dry run by default: it builds every package as workflow artifacts and publishes nothing. OS code signing is not configured yet: the Windows installer is unsigned and the macOS app is only ad-hoc signed, so macOS needs right-click > **Open** (or `xattr -dr com.apple.quarantine /Applications/GetKeys.app`) on first launch; marketplace signatures are separate from installer signing.
 
 ## Develop providers
 
