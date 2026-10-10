@@ -3,7 +3,7 @@
   "name": "GitHub",
   "publisher": "getkeys",
   "version": "0.1.0",
-  "description": "Connect repositories, store tokens, and update Actions secrets.",
+  "description": "Keep GitHub tokens and open the page to create fine-grained ones.",
   "homepage": "https://github.com",
   "category": "devtools",
   "hosts": ["api.github.com", "github.com"],
@@ -14,7 +14,7 @@
     "client_id_env": "GETKEYS_GITHUB_CLIENT_ID",
     "scopes": "repo read:user"
   },
-  "operations": ["identity", "list_resources", "validate_credential", "write_secret", "guide"],
+  "operations": ["identity", "list_resources", "validate_credential", "guide"],
   "fields": [],
   "credential_fields": [
     {

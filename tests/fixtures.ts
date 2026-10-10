@@ -27,11 +27,9 @@ export function emptySnapshot(): Snapshot {
     })),
     connections: [],
     credentials: [],
-    bindings: [],
     rotations: [],
     activity: [],
     vault_path: 'C:\\Users\\you\\AppData\\Roaming\\GetKeys\\vault.db',
-    project_folders: [],
   };
 }
 export function connectedSnapshot(): Snapshot {

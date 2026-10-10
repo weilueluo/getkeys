@@ -48,6 +48,40 @@ pub struct Manifest {
     /// Where this provider's keys and sign-ins live on a device.
     #[serde(default)]
     pub sources: Vec<Source>,
+    /// What GetKeys can create in the account, for providers with `create_resource`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_resource: Option<NewResource>,
+}
+
+/// How to ask for a new repository or project.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[serde(deny_unknown_fields)]
+pub struct NewResource {
+    /// What the provider calls it, such as "repository" or "project".
+    pub noun: String,
+    /// Choices shown when creating one, sent as `CreateResource` options.
+    #[serde(default)]
+    pub options: Vec<ResourceOption>,
+    /// A secret GetKeys makes up, sends in the request body field `key` and saves as a key,
+    /// such as a database password. The provider code never sees it.
+    #[serde(default)]
+    pub generated: Option<ConfigField>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceOption {
+    pub key: String,
+    pub label: String,
+    pub choices: Vec<Choice>,
+    pub default: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
+#[serde(deny_unknown_fields)]
+pub struct Choice {
+    pub value: String,
+    pub label: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, TS)]
@@ -225,6 +259,10 @@ pub enum OperationKind {
     RotateCredential,
     WriteSecret,
     Guide,
+    /// Lists the accounts or organisations new resources can belong to.
+    ListOwners,
+    /// Creates a repository or project.
+    CreateResource,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -266,6 +304,14 @@ pub enum Operation {
     Guide {
         resource: String,
     },
+    ListOwners,
+    /// `owner` is an ID from `ListOwners`; `""` means the account itself.
+    CreateResource {
+        owner: String,
+        name: String,
+        #[serde(default)]
+        options: BTreeMap<String, String>,
+    },
 }
 
 impl Operation {
@@ -282,12 +328,15 @@ impl Operation {
             Self::RotateCredential { .. } => OperationKind::RotateCredential,
             Self::WriteSecret { .. } => OperationKind::WriteSecret,
             Self::Guide { .. } => OperationKind::Guide,
+            Self::ListOwners => OperationKind::ListOwners,
+            Self::CreateResource { .. } => OperationKind::CreateResource,
         }
     }
     pub fn mutates(&self) -> bool {
         matches!(
             self,
             Self::CreateCredential { .. }
+                | Self::CreateResource { .. }
                 | Self::DeactivateCredential { .. }
                 | Self::RevokeCredential { .. }
                 | Self::RotateCredential { .. }
@@ -358,6 +407,8 @@ pub enum Outcome {
     Credential(RemoteCredential),
     Done,
     Guide { url: String, message: String },
+    Owners(Vec<Owner>),
+    Resource(Resource),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -366,11 +417,27 @@ pub struct Identity {
     pub name: String,
 }
 
+/// An account or organisation that can own new resources. `id` is `""` for the account itself.
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
+pub struct Owner {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, TS)]
 pub struct Resource {
     pub id: String,
     pub name: String,
     pub kind: String,
+    /// Where to open it on the provider's site.
+    #[serde(default)]
+    pub url: String,
+    /// Still being set up; its keys may not exist yet.
+    #[serde(default)]
+    pub pending: bool,
+    /// Something the user should know about how it was created.
+    #[serde(default)]
+    pub note: String,
 }
 
 // Secret-bearing transport objects deliberately do not implement Debug or TS.
@@ -410,6 +477,24 @@ pub fn get(url: String) -> HttpRequest {
         auth: RequestAuth::Connection,
         secret: None,
     }
+}
+
+pub fn post(url: String, body: Value) -> HttpRequest {
+    HttpRequest {
+        method: "POST".into(),
+        body: Some(body),
+        ..get(url)
+    }
+}
+
+/// A creation the provider refused because the name is in use or invalid.
+pub fn name_error(response: &HttpResponse, noun: &str) -> Option<Step> {
+    matches!(response.status, 409 | 422).then(|| {
+        error(
+            "name_unavailable",
+            &format!("That {noun} name is taken or not allowed. Choose another name."),
+        )
+    })
 }
 
 pub fn error(code: &str, message: &str) -> Step {

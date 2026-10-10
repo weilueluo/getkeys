@@ -3,7 +3,7 @@
   "name": "Supabase",
   "publisher": "getkeys",
   "version": "0.1.0",
-  "description": "Find project keys and rotate server credentials.",
+  "description": "Create projects, find their keys, and rotate server credentials.",
   "homepage": "https://supabase.com",
   "category": "database",
   "hosts": ["api.supabase.com", "*.supabase.co"],
@@ -15,7 +15,9 @@
     "read_credential",
     "create_credential",
     "validate_credential",
-    "revoke_credential"
+    "revoke_credential",
+    "list_owners",
+    "create_resource"
   ],
   "fields": [],
   "credential_fields": [
@@ -58,5 +60,25 @@
     },
     { "kind": "env", "var": "SUPABASE_ACCESS_TOKEN" },
     { "kind": "env", "var": "SUPABASE_TOKEN" }
-  ]
+  ],
+  "new_resource": {
+    "noun": "project",
+    "options": [
+      {
+        "key": "region",
+        "label": "Region",
+        "choices": [
+          { "value": "americas", "label": "Americas" },
+          { "value": "emea", "label": "Europe" },
+          { "value": "apac", "label": "Asia-Pacific" }
+        ],
+        "default": "americas"
+      }
+    ],
+    "generated": {
+      "key": "db_pass",
+      "label": "Database password",
+      "env": "SUPABASE_DB_PASSWORD"
+    }
+  }
 }

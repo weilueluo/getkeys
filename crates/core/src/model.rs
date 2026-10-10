@@ -138,26 +138,6 @@ pub struct Credential {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
-pub struct Binding {
-    pub id: String,
-    pub credential_id: String,
-    pub field: String,
-    pub variable: String,
-    pub project: String,
-    pub environment: String,
-    pub destination: Destination,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Destination {
-    Local,
-    Provider {
-        connection_id: String,
-        resource: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct Rotation {
     pub id: String,
     pub credential_id: String,
@@ -167,9 +147,6 @@ pub struct Rotation {
     pub name: String,
     pub state: RotationState,
     pub candidate_id: Option<String>,
-    pub bindings: Vec<Binding>,
-    pub updated_bindings: Vec<String>,
-    pub verified_bindings: Vec<String>,
     pub created_at: i64,
 }
 impl Rotation {
@@ -177,9 +154,7 @@ impl Rotation {
         !matches!(self.state, RotationState::Complete | RotationState::Aborted)
     }
     pub fn uses_connection(&self, id: &str) -> bool {
-        self.connection_id == id || self.bindings.iter().any(|b| {
-            matches!(&b.destination, Destination::Provider { connection_id, .. } if connection_id == id)
-        })
+        self.connection_id == id
     }
     pub fn uses_credential(&self, id: &str) -> bool {
         self.credential_id == id || self.candidate_id.as_deref() == Some(id)
@@ -190,10 +165,16 @@ impl Rotation {
 pub enum RotationState {
     Planned,
     Creating,
-    Uncertain { action: String },
-    Stored,
-    Distributing,
-    AwaitingVerification,
+    Uncertain {
+        action: String,
+    },
+    /// The replacement is saved and checked; the old key is retired once the person has
+    /// swapped the new one in wherever it is used. Earlier versions had more steps here.
+    #[serde(
+        alias = "stored",
+        alias = "distributing",
+        alias = "awaiting_verification"
+    )]
     ReadyToRetire,
     Deactivating,
     Deactivated,
@@ -225,14 +206,10 @@ pub struct Snapshot {
     pub plugins: Vec<PluginView>,
     pub connections: Vec<ConnectionView>,
     pub credentials: Vec<CredentialView>,
-    pub bindings: Vec<Binding>,
     pub rotations: Vec<Rotation>,
     pub activity: Vec<Activity>,
     /// Where the encrypted vault file lives.
     pub vault_path: String,
-    /// Folders whose `.env` files are scanned for keys.
-    #[serde(default)]
-    pub project_folders: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

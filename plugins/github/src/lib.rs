@@ -3,14 +3,6 @@ use serde_json::{Value, json};
 
 pub const MANIFEST: &str = include_str!("../manifest.json");
 
-fn repo_path(resource: &str) -> Option<String> {
-    let (owner, repo) = resource.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-        return None;
-    }
-    Some(format!("{}/{}", segment(owner), segment(repo)))
-}
-
 pub fn handle(call: Call) -> Step {
     execute(call).unwrap_or_else(|_| {
         error(
@@ -35,11 +27,6 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         if matches!(call.operation, Operation::ValidateCredential { .. }) {
             return Ok(done(Outcome::Done));
         }
-        if matches!(call.operation, Operation::WriteSecret { .. })
-            && call.cursor["stage"] == "write"
-        {
-            return Ok(done(Outcome::Done));
-        }
         let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
         return Ok(match &call.operation {
             Operation::Identity => done(Outcome::Identity(Identity {
@@ -56,6 +43,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                         id: id.into(),
                         name: id.into(),
                         kind: "repository".into(),
+                        ..Default::default()
                     });
                 }
                 if repos.len() == 100 {
@@ -68,20 +56,6 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                 } else {
                     done(Outcome::Resources(resources))
                 }
-            }
-            Operation::WriteSecret { resource, name, .. } => {
-                let path = repo_path(resource).ok_or("repository")?;
-                let mut req = get(format!(
-                    "https://api.github.com/repos/{path}/actions/secrets/{}",
-                    segment(name)
-                ));
-                req.method = "PUT".into();
-                github_headers(&mut req);
-                req.secret = Some(SecretInjection::SealedBox {
-                    public_key: v["key"].as_str().ok_or("public key")?.into(),
-                    key_id: v["key_id"].as_str().ok_or("key id")?.into(),
-                });
-                request(req, json!({"stage":"write"}))
             }
             _ => error(
                 "unsupported",
@@ -98,17 +72,6 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         }
         Operation::ListResources => {
             get("https://api.github.com/user/repos?per_page=100&page=1&sort=full_name".into())
-        }
-        Operation::WriteSecret { resource, .. } => {
-            let Some(path) = repo_path(resource) else {
-                return Ok(error(
-                    "invalid_resource",
-                    "Select a repository as owner/name.",
-                ));
-            };
-            get(format!(
-                "https://api.github.com/repos/{path}/actions/secrets/public-key"
-            ))
         }
         _ => {
             return Ok(error(
@@ -160,35 +123,5 @@ mod tests {
             panic!()
         };
         assert!(url.contains("target_name=owner"));
-    }
-    #[test]
-    fn rejects_ambiguous_repository_paths() {
-        assert!(repo_path("a/b/c").is_none());
-        assert!(repo_path("/b").is_none());
-    }
-    #[test]
-    fn secret_writes_require_sealed_box_injection() {
-        let result = handle(Call {
-            operation: Operation::WriteSecret {
-                resource: "a/b".into(),
-                name: "TOKEN".into(),
-                environment: "production".into(),
-            },
-            config: BTreeMap::new(),
-            cursor: Value::Null,
-            response: Some(HttpResponse {
-                status: 200,
-                headers: BTreeMap::new(),
-                body: json!({"key":"public","key_id":"id"}).to_string(),
-            }),
-        });
-        let Step::Request { request, .. } = result else {
-            panic!()
-        };
-        assert!(matches!(
-            request.secret,
-            Some(SecretInjection::SealedBox { .. })
-        ));
-        assert_eq!(request.method, "PUT");
     }
 }

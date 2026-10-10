@@ -5,18 +5,16 @@ import type { Rotation, Snapshot } from './types';
 import { request } from './bridge';
 import { Field, Modal, sentence } from './ui';
 
-const steps = ['Create replacement', 'Update consumers', 'Verify consumers', 'Retire old key'];
+const steps = ['Create replacement', 'Swap it in', 'Retire old key'];
 function stage(r: Rotation) {
   const s = r.state.kind;
   return s === 'complete'
-    ? 4
-    : ['ready_to_retire', 'deactivating', 'deactivated', 'retiring'].includes(s)
-      ? 3
-      : s === 'awaiting_verification'
-        ? 2
-        : ['stored', 'distributing'].includes(s)
-          ? 1
-          : 0;
+    ? 3
+    : ['deactivating', 'deactivated', 'retiring'].includes(s)
+      ? 2
+      : s === 'ready_to_retire'
+        ? 1
+        : 0;
 }
 export const isFinished = (r: Rotation) => ['complete', 'aborted'].includes(r.state.kind);
 /** Rotations that replace this key or produced it as the replacement, newest first. */
@@ -33,7 +31,6 @@ export function RotationProgress({
   perform,
 }: Controller & { rotation: Rotation }) {
   const [retire, setRetire] = useState(false);
-  const [verify, setVerify] = useState<string>();
   const [reconcile, setReconcile] = useState(false);
   const advance = () =>
     perform(() => request<Rotation>({ kind: 'advance_rotation', rotation_id: r.id }));
@@ -50,7 +47,7 @@ export function RotationProgress({
   return (
     <section className="detail-section rotation" aria-label="Rotation">
       <div className="detail-section-heading">
-        <h3>Rotation</h3>
+        <h2>Rotation</h2>
         <span className={`state ${uncertain ? 'warning' : 'active'}`}>{sentence(s)}</span>
       </div>
       <p className="quiet">
@@ -70,42 +67,11 @@ export function RotationProgress({
           </li>
         ))}
       </ol>
-      {r.bindings.length === 0 ? (
+      {s === 'ready_to_retire' && (
         <p className="callout">
-          No apps are registered for this key. Update and test every app that uses it before
-          retiring the old key.
+          The replacement is saved as {r.name}. Put it wherever you use this key, then retire the
+          old one.
         </p>
-      ) : (
-        <div className="rotation-consumers">
-          {r.bindings.map((b) => (
-            <div key={b.id}>
-              <span>
-                <strong className="mono">{b.variable}</strong>
-                <small>
-                  {b.project} · {b.environment}
-                </small>
-              </span>
-              <span
-                className={`consumer-state ${r.verified_bindings.includes(b.id) ? 'verified' : ''}`}
-              >
-                {r.verified_bindings.includes(b.id)
-                  ? 'Verified'
-                  : r.updated_bindings.includes(b.id)
-                    ? 'Updated · verify deployment'
-                    : 'Waiting'}
-              </span>
-              {s === 'awaiting_verification' && !r.verified_bindings.includes(b.id) && (
-                <button
-                  className="button secondary small"
-                  disabled={busy}
-                  onClick={() => setVerify(b.id)}
-                >
-                  Verify
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
       )}
       <div className="rotation-actions">
         {s === 'planned' && (
@@ -123,11 +89,6 @@ export function RotationProgress({
               Create replacement <ArrowRight size={14} />
             </button>
           </>
-        )}
-        {['stored', 'distributing'].includes(s) && (
-          <button className="button" disabled={busy} onClick={() => void advance()}>
-            Validate & update consumers <ArrowRight size={14} />
-          </button>
         )}
         {['ready_to_retire', 'deactivated'].includes(s) && (
           <button className="button" disabled={busy} onClick={() => setRetire(true)}>
@@ -160,8 +121,8 @@ export function RotationProgress({
           onClose={() => setRetire(false)}
         >
           <p>
-            Confirm that every app using this key has been updated and tested with the replacement.
-            Apps still using the old key will lose access.
+            Make sure everything that used this key now has the replacement. Anything still using
+            the old key will lose access.
           </p>
           <p className="quiet">
             {automaticRetirement
@@ -197,29 +158,8 @@ export function RotationProgress({
             }
           >
             {automaticRetirement
-              ? 'I verified my apps — continue'
+              ? 'Everything has the new key — retire it'
               : 'I revoked the old token — complete rotation'}
-          </button>
-        </Modal>
-      )}
-      {verify && (
-        <Modal title="Verify this consumer" onClose={() => setVerify(undefined)}>
-          <p>
-            Deploy or restart the app with the replacement credential, then test a request that
-            needs it. A successful secret write alone does not verify the deployment.
-          </p>
-          <button
-            className="button full"
-            disabled={busy}
-            onClick={() =>
-              void perform(() =>
-                request({ kind: 'verify_binding', rotation_id: r.id, binding_id: verify }),
-              ).then((done) => {
-                if (done) setVerify(undefined);
-              })
-            }
-          >
-            <Check size={15} /> The app works with the new key
           </button>
         </Modal>
       )}
@@ -227,7 +167,7 @@ export function RotationProgress({
         <Modal title="Find the replacement" onClose={() => setReconcile(false)}>
           <p>
             Inspect the provider for the key created by this attempt. If its value is only shown
-            once, import it in My keys before continuing.
+            once, add it with New key before continuing.
           </p>
           <form
             onSubmit={(e) => {

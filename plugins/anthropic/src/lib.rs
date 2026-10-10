@@ -105,12 +105,14 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                     id: DEFAULT.into(),
                     name: "Default workspace".into(),
                     kind: "workspace".into(),
+                    ..Default::default()
                 }];
                 for w in &items {
                     resources.push(Resource {
                         id: w["id"].as_str().ok_or("id")?.into(),
                         name: w["name"].as_str().ok_or("name")?.into(),
                         kind: "workspace".into(),
+                        ..Default::default()
                     });
                 }
                 done(Outcome::Resources(resources))

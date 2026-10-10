@@ -78,7 +78,7 @@
         ]
       },
       "wasm": "official.anthropic-0.1.0.wasm",
-      "sha256": "8c416cdef5a3c4841116c9d31515dd4fa3138a9e15bd4defb0efd450f4015bc6"
+      "sha256": "d58a39e8eb26eda7aa430a6a821bffa681db10924b038c511b4b6f3d727efd0c"
     },
     {
       "manifest": {
@@ -221,7 +221,7 @@
         ]
       },
       "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "f05e527901d7a7b13e2111beb810dad5772cc246a7d4a4f4d39131e3b8600c94"
+      "sha256": "2b21d981f296b50ec733c4a922ce71917edcabf0d814a74498e6834fed445f71"
     },
     {
       "manifest": {
@@ -289,7 +289,7 @@
         ]
       },
       "wasm": "official.cloudflare-0.1.0.wasm",
-      "sha256": "cb3273ed1b3944dd26fec47c8c9e6e9aefe6388ea2bf949adf4eb31769d41d58"
+      "sha256": "1dbebe253fd2ef2dcc164f7aa3d80b0a4fdc7888ba22c744afb23d84cf8b388f"
     },
     {
       "manifest": {
@@ -563,7 +563,7 @@
         ]
       },
       "wasm": "official.gemini-0.1.0.wasm",
-      "sha256": "a69c4be0c5ca7c1b24933300feba5bd38051f7210337e1afccb5aecfec8d9e16"
+      "sha256": "92228eec38dd4a311786bee1ff4ac3a8a66a1c5966d64c6a3f9414cc35aacabf"
     },
     {
       "manifest": {
@@ -571,7 +571,7 @@
         "name": "GitHub",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "description": "Connect repositories, store tokens, and update Actions secrets.",
+        "description": "Keep GitHub tokens and open the page to create fine-grained ones.",
         "homepage": "https://github.com",
         "kind": "managed",
         "category": "devtools",
@@ -590,7 +590,6 @@
           "identity",
           "list_resources",
           "validate_credential",
-          "write_secret",
           "guide"
         ],
         "fields": [],
@@ -651,7 +650,7 @@
         ]
       },
       "wasm": "official.github-0.1.0.wasm",
-      "sha256": "1f952fef1b307664a13b0d72807dc2c4fd41d919b221d5488ebcf90360b15d5c"
+      "sha256": "712434377a3ddc2729fcd6754b171f46f9a1bb488f8624076a8a8a9b1ff2e7f2"
     },
     {
       "manifest": {
@@ -719,7 +718,7 @@
         ]
       },
       "wasm": "official.gitlab-0.1.0.wasm",
-      "sha256": "fe781eddf57d2b449e6c378a8df418d02c6f9cd5ddcb5f7ea994db634c142cd8"
+      "sha256": "d859a72fbe986eab72a32a9fcec9360cde1bd824296dd57d84131f19ef4a56c4"
     },
     {
       "manifest": {
@@ -979,7 +978,7 @@
         ]
       },
       "wasm": "official.openai-0.1.0.wasm",
-      "sha256": "d023e448061b089e8637e59e8d7c3aceac7ad237466c62e67a0415d4b8a450b1"
+      "sha256": "8ec3ea06a915559425fa2391c1ae70d424cea38e9f86f866336d4825acf31868"
     },
     {
       "manifest": {
@@ -1057,7 +1056,7 @@
         ]
       },
       "wasm": "official.openrouter-0.1.0.wasm",
-      "sha256": "8ea2a3dd722359bae9a1a7cd72200c1e8577e802dade869bc1faf56655b86393"
+      "sha256": "570275c51f9c969e9d1fbb719a260b96fe26b99b757c836e4ef5e489fc3e842d"
     },
     {
       "manifest": {
@@ -1308,7 +1307,7 @@
         "name": "Supabase",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "description": "Find project keys and rotate server credentials.",
+        "description": "Create projects, find their keys, and rotate server credentials.",
         "homepage": "https://supabase.com",
         "kind": "managed",
         "category": "database",
@@ -1327,7 +1326,9 @@
           "read_credential",
           "create_credential",
           "validate_credential",
-          "revoke_credential"
+          "revoke_credential",
+          "list_owners",
+          "create_resource"
         ],
         "fields": [],
         "credential_fields": [
@@ -1405,10 +1406,42 @@
             "kind": "env",
             "var": "SUPABASE_TOKEN"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "project",
+          "options": [
+            {
+              "key": "region",
+              "label": "Region",
+              "choices": [
+                {
+                  "value": "americas",
+                  "label": "Americas"
+                },
+                {
+                  "value": "emea",
+                  "label": "Europe"
+                },
+                {
+                  "value": "apac",
+                  "label": "Asia-Pacific"
+                }
+              ],
+              "default": "americas"
+            }
+          ],
+          "generated": {
+            "key": "db_pass",
+            "label": "Database password",
+            "placeholder": "",
+            "required": false,
+            "secret": true,
+            "env": "SUPABASE_DB_PASSWORD"
+          }
+        }
       },
       "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "edafee8b1aa42218d093f3e9f3f716002d2d19da2de4b46c5fe1716cd8f97c8a"
+      "sha256": "ea36d8f3f8e7a772164ca74e219f3c6a5acb01cfcf5f8b50faad073b3ffa8564"
     },
     {
       "manifest": {
@@ -1469,7 +1502,7 @@
         "name": "Vercel",
         "publisher": "getkeys",
         "version": "0.1.0",
-        "description": "Keep account tokens and deliver secrets to your deployments.",
+        "description": "Create, list, and revoke Vercel account tokens.",
         "homepage": "https://vercel.com",
         "kind": "managed",
         "category": "cloud",
@@ -1488,7 +1521,6 @@
           "create_credential",
           "validate_credential",
           "revoke_credential",
-          "write_secret",
           "guide"
         ],
         "fields": [],
@@ -1556,7 +1588,7 @@
         ]
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "d6c60a51fbd23d341a003bff53d3e86f686dbc470fbe1353b0749cb61469e79e"
+      "sha256": "10a747f39d418208d6c0614af486214f0928e4ffc82a4b9ff82a35135a10c6e3"
     },
     {
       "manifest": {

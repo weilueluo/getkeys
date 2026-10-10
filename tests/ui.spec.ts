@@ -65,6 +65,11 @@ async function mockHost(page: Page, connected: boolean | Snapshot = false) {
           if (c.kind === 'resources')
             return [{ id: 'abcdefghijklmnopqrst', name: 'GetKeys', kind: 'project' }];
           if (c.kind === 'sync') return [];
+          if (c.kind === 'open_token_page') return null;
+          if (c.kind === 'set_groups') {
+            data.credentials.find((k) => k.id === c.credential_id)!.groups = c.groups;
+            return null;
+          }
           if (c.kind === 'reveal') return { fields: { token: 'only-revealed-on-request' } };
           if (c.kind === 'plan_rotation') {
             const r = {
@@ -76,9 +81,6 @@ async function mockHost(page: Page, connected: boolean | Snapshot = false) {
               name: c.name,
               state: { kind: 'planned' },
               candidate_id: null,
-              bindings: [],
-              updated_bindings: [],
-              verified_bindings: [],
               created_at: 1791493200,
             };
             data.rotations.push(r as any);
@@ -160,7 +162,7 @@ test('keys stay masked, have firm actions, and rotate from the row', async ({ pa
   await page.screenshot({ path: 'artifacts/key-details.png', fullPage: true });
   await page.getByRole('button', { name: 'Rotate Production API' }).click();
   const rotate = page.getByRole('dialog', { name: 'Rotate Production API' });
-  await expect(rotate).toContainText('No apps are registered');
+  await expect(rotate).toContainText('wherever you use it');
   await page.screenshot({ path: 'artifacts/rotate.png' });
   await rotate.getByRole('button', { name: 'Review rotation plan' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -263,7 +265,7 @@ test('groups, rejected keys, keys without a provider, and export', async ({ page
   await expect(page.getByText('Saved 3 variables')).toBeVisible();
   await page.getByRole('button', { name: 'New key' }).click();
   const form = page.getByRole('dialog', { name: 'New key' });
-  await form.getByLabel('Provider').selectOption('custom');
+  await form.getByRole('button', { name: /Any other service/ }).click();
   await form.getByRole('button', { name: 'Add value' }).click();
   await expect(form.getByLabel('Variable 2', { exact: true })).toBeVisible();
   await page.screenshot({ path: 'artifacts/custom-key.png' });
@@ -276,4 +278,51 @@ test('groups, rejected keys, keys without a provider, and export', async ({ page
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.getByRole('button', { name: 'Details for OpenAI' }).click();
   await page.screenshot({ path: 'artifacts/keys-dark.png', fullPage: true });
+});
+test('a key’s groups link to them, and Filter narrows only the tab in view', async ({ page }) => {
+  const data = withVercel(connectedSnapshot());
+  data.credentials[0].groups = ['backend'];
+  data.credentials[1].problem = 'Rejected by the provider. It was revoked or is wrong.';
+  await mockHost(page, data);
+  await page.goto('/');
+  const keys = page.getByRole('list', { name: 'Keys' });
+  await expect(page.getByPlaceholder('Search keys')).toBeVisible();
+
+  // Groups are plain links in the details, with a small + to file the key elsewhere.
+  await page.getByRole('button', { name: 'Details for Production API' }).click();
+  const details = page.getByRole('region', { name: 'Production API details' });
+  await expect(details.getByRole('textbox')).toHaveCount(0);
+  await details.getByRole('button', { name: 'Groups for Production API' }).click();
+  const menu = details.getByRole('menu');
+  await menu.getByRole('menuitem', { name: 'New group' }).click();
+  await details.getByLabel('New group name').fill('staging');
+  await page.keyboard.press('Enter');
+  await expect(details.getByRole('button', { name: 'staging' })).toBeVisible();
+  await page.screenshot({ path: 'artifacts/key-groups.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await details.getByRole('button', { name: 'backend' }).click();
+  await expect(page.getByRole('tab', { name: /^backend/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  await expect(keys.getByRole('listitem')).toHaveCount(1);
+
+  // Filter applies to the tab in view and resets when the tab changes.
+  await page.getByRole('tab', { name: /^Ready to use/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'Invalid' }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(1);
+  await expect(keys).toContainText('Supabase CLI');
+  await page.screenshot({ path: 'artifacts/filter.png', fullPage: true });
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.keyboard.press('Escape');
+  await page.getByRole('tab', { name: /^backend/ }).click();
+  await page.getByRole('tab', { name: /^Ready to use/ }).click();
+  await expect(keys.getByRole('listitem')).toHaveCount(3);
+
+  // Providers only offer Open once they're added.
+  await page.getByRole('button', { name: 'Providers', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Open Supabase' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open GitHub' })).toHaveCount(0);
 });

@@ -53,7 +53,64 @@ fn key_name(kind: &str, name: &str) -> String {
     }
 }
 
+fn project(p: &Value) -> Result<Resource, &'static str> {
+    let id = p["ref"]
+        .as_str()
+        .or(p["id"].as_str())
+        .ok_or("project ref")?;
+    Ok(Resource {
+        id: id.into(),
+        name: p["name"].as_str().ok_or("project name")?.into(),
+        kind: "project".into(),
+        url: format!("https://supabase.com/dashboard/project/{id}"),
+        pending: p["status"] == "COMING_UP",
+        note: String::new(),
+    })
+}
+
+/// A project in organisation `owner`. GetKeys makes up its database password and puts it in
+/// the request, so this code never sees it.
+fn create(call: &Call) -> Result<Step, &'static str> {
+    let Operation::CreateResource {
+        owner,
+        name,
+        options,
+    } = &call.operation
+    else {
+        return Err("operation");
+    };
+    let Some(response) = &call.response else {
+        if owner.is_empty() {
+            return Ok(error(
+                "invalid_owner",
+                "Choose the Supabase organization for the project.",
+            ));
+        }
+        let region = options.get("region").map_or("americas", String::as_str);
+        let mut r = post(
+            "https://api.supabase.com/v1/projects".into(),
+            json!({
+                "name": name,
+                "organization_slug": owner,
+                "region_selection": {"type": "smartGroup", "code": region},
+            }),
+        );
+        r.secret = Some(SecretInjection::JsonField {
+            field: "db_pass".into(),
+        });
+        return Ok(request(r, Value::Null));
+    };
+    if let Some(err) = name_error(response, "project").or_else(|| provider_error(response)) {
+        return Ok(err);
+    }
+    let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
+    Ok(done(Outcome::Resource(project(&v)?)))
+}
+
 fn execute(call: Call) -> Result<Step, &'static str> {
+    if matches!(call.operation, Operation::CreateResource { .. }) {
+        return create(&call);
+    }
     if let Some(response) = call.response {
         if let Some(err) = provider_error(&response) {
             return Ok(err);
@@ -84,11 +141,21 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                 v.as_array()
                     .ok_or("projects")?
                     .iter()
-                    .map(|p| {
-                        Ok(Resource {
-                            id: p["id"].as_str().ok_or("project id")?.into(),
-                            name: p["name"].as_str().ok_or("project name")?.into(),
-                            kind: "project".into(),
+                    .map(project)
+                    .collect::<Result<_, &'static str>>()?,
+            )),
+            Operation::ListOwners => done(Outcome::Owners(
+                v.as_array()
+                    .ok_or("organizations")?
+                    .iter()
+                    .map(|o| {
+                        Ok(Owner {
+                            id: o["slug"]
+                                .as_str()
+                                .or(o["id"].as_str())
+                                .ok_or("organization slug")?
+                                .into(),
+                            name: o["name"].as_str().ok_or("organization name")?.into(),
                         })
                     })
                     .collect::<Result<_, &'static str>>()?,
@@ -135,7 +202,9 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         });
     }
     let mut req = match &call.operation {
-        Operation::Identity => get("https://api.supabase.com/v1/organizations".into()),
+        Operation::Identity | Operation::ListOwners => {
+            get("https://api.supabase.com/v1/organizations".into())
+        }
         Operation::ListResources => get("https://api.supabase.com/v1/projects".into()),
         Operation::ListCredentials { resource }
         | Operation::ReadCredential { resource, .. }
@@ -260,5 +329,55 @@ mod tests {
         assert_eq!(request.method, "POST");
         assert!(request.url.ends_with("?reveal=true"));
         assert_eq!(request.body.unwrap()["type"], "secret");
+    }
+    fn new_project(response: Option<Value>) -> Step {
+        handle(call(
+            Operation::CreateResource {
+                owner: "acme".into(),
+                name: "my-app".into(),
+                options: BTreeMap::from([("region".into(), "emea".into())]),
+            },
+            response,
+        ))
+    }
+    #[test]
+    fn new_projects_get_an_injected_database_password() {
+        let Step::Request { request, .. } = new_project(None) else {
+            panic!()
+        };
+        let body = request.body.unwrap();
+        assert_eq!(body["organization_slug"], "acme");
+        assert_eq!(body["region_selection"]["code"], "emea");
+        assert!(body.get("db_pass").is_none());
+        assert!(
+            matches!(request.secret, Some(SecretInjection::JsonField { field }) if field == "db_pass")
+        );
+        let Step::Complete {
+            result: Outcome::Resource(project),
+        } = new_project(Some(
+            json!({"id":"old","ref":"abcdefghijklmnopqrst","name":"my-app","status":"COMING_UP"}),
+        ))
+        else {
+            panic!()
+        };
+        assert_eq!(project.id, "abcdefghijklmnopqrst");
+        assert!(project.pending);
+        assert!(project.url.ends_with("/project/abcdefghijklmnopqrst"));
+    }
+    #[test]
+    fn owners_are_organizations_by_slug() {
+        let Step::Complete {
+            result: Outcome::Owners(owners),
+        } = handle(call(
+            Operation::ListOwners,
+            Some(json!([{"id":"x","slug":"acme","name":"Acme"}])),
+        ))
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (owners[0].id.as_str(), owners[0].name.as_str()),
+            ("acme", "Acme")
+        );
     }
 }

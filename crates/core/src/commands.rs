@@ -79,18 +79,23 @@ pub enum Command {
         resource: String,
         name: String,
     },
+    /// Accounts and organisations a connection can make a new project in.
+    Owners {
+        connection_id: String,
+    },
+    /// Makes a project to create keys in. `options` are the provider's `new_resource` choices.
+    CreateResource {
+        connection_id: String,
+        owner: String,
+        name: String,
+        options: BTreeMap<String, String>,
+    },
     Reveal {
         credential_id: String,
     },
     Guide {
         connection_id: String,
         resource: String,
-    },
-    SaveBinding {
-        binding: Binding,
-    },
-    RemoveBinding {
-        binding_id: String,
     },
     PlanRotation {
         credential_id: String,
@@ -105,10 +110,6 @@ pub enum Command {
     },
     AdvanceRotation {
         rotation_id: String,
-    },
-    VerifyBinding {
-        rotation_id: String,
-        binding_id: String,
     },
     ReconcileRotation {
         rotation_id: String,
@@ -149,9 +150,6 @@ pub enum Command {
         credential_id: String,
     },
     OpenVaultFolder,
-    SetProjectFolders {
-        folders: Vec<String>,
-    },
     Restore {
         path: String,
         passphrase: String,
@@ -194,6 +192,7 @@ impl Command {
                 | Command::Export { .. }
                 | Command::Guide { .. }
                 | Command::Resources { .. }
+                | Command::Owners { .. }
         )
     }
 }
@@ -299,24 +298,18 @@ impl App {
                 resource,
                 name,
             } => to_value(self.create(&connection_id, &resource, &name)?)?,
+            Command::Owners { connection_id } => to_value(self.owners(&connection_id)?)?,
+            Command::CreateResource {
+                connection_id,
+                owner,
+                name,
+                options,
+            } => to_value(self.create_resource(&connection_id, &owner, &name, options)?)?,
             Command::Reveal { credential_id } => to_value(self.secret(&credential_id)?)?,
             Command::Guide {
                 connection_id,
                 resource,
             } => to_value(self.guide(&connection_id, &resource)?)?,
-            Command::SaveBinding { binding } => to_value(self.save_binding(binding)?)?,
-            Command::RemoveBinding { binding_id } => {
-                ensure!(
-                    !self
-                        .vault
-                        .rotations()?
-                        .iter()
-                        .any(|r| r.is_active() && r.bindings.iter().any(|b| b.id == binding_id)),
-                    "Finish the active rotation before removing this binding"
-                );
-                self.vault.remove("binding", &binding_id)?;
-                Value::Null
-            }
             Command::PlanRotation {
                 credential_id,
                 name,
@@ -324,10 +317,6 @@ impl App {
             Command::AdvanceRotation { rotation_id } => {
                 to_value(self.advance_rotation(&rotation_id)?)?
             }
-            Command::VerifyBinding {
-                rotation_id,
-                binding_id,
-            } => to_value(self.verify_binding(&rotation_id, &binding_id)?)?,
             Command::ReconcileRotation {
                 rotation_id,
                 provider_id,
@@ -360,7 +349,6 @@ impl App {
                 fields,
             } => to_value(self.save_key(credential_id.as_deref(), &plugin_id, &name, fields)?)?,
             Command::RotateNow { credential_id } => to_value(self.rotate_now(&credential_id)?)?,
-            Command::SetProjectFolders { folders } => to_value(self.set_project_folders(folders)?)?,
             Command::OpenVaultFolder => {
                 let folder = self
                     .vault

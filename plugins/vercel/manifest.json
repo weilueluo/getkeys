@@ -3,7 +3,7 @@
   "name": "Vercel",
   "publisher": "getkeys",
   "version": "0.1.0",
-  "description": "Keep account tokens and deliver secrets to your deployments.",
+  "description": "Create, list, and revoke Vercel account tokens.",
   "homepage": "https://vercel.com",
   "category": "cloud",
   "hosts": ["api.vercel.com", "vercel.com"],
@@ -15,7 +15,6 @@
     "create_credential",
     "validate_credential",
     "revoke_credential",
-    "write_secret",
     "guide"
   ],
   "fields": [],

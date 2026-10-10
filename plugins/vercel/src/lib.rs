@@ -148,6 +148,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                         id: p["id"].as_str().ok_or("id")?.into(),
                         name: p["name"].as_str().ok_or("name")?.into(),
                         kind: "project".into(),
+                        ..Default::default()
                     });
                 }
                 if let Some(next) = v["pagination"]["next"].as_u64() {
@@ -162,16 +163,6 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                     done(Outcome::Resources(resources))
                 }
             }
-            Operation::WriteSecret { .. } => {
-                if v["failed"].as_array().is_some_and(|f| !f.is_empty()) || !v["error"].is_null() {
-                    error(
-                        "write_failed",
-                        "Vercel did not accept the environment variable. The consumer was not updated.",
-                    )
-                } else {
-                    done(Outcome::Done)
-                }
-            }
             _ => error("unsupported", "This Vercel operation is unavailable."),
         });
     }
@@ -183,29 +174,12 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         Operation::CreateCredential { resource, name } if resource.is_empty()=>{let mut r=get("https://api.vercel.com/v3/user/tokens".into());r.method="POST".into();r.body=Some(json!({"name":name}));r}
         Operation::RevokeCredential { resource, credential } if resource.is_empty()=>{let mut r=get(format!("https://api.vercel.com/v3/user/tokens/{}",segment(credential)));r.method="DELETE".into();r}
         Operation::ValidateCredential { resource } if resource.is_empty()=>get("https://api.vercel.com/v2/user".into()),
-        Operation::Guide { .. }=>return Ok(done(Outcome::Guide { url:"https://vercel.com/account/settings/tokens".into(),message:"Create a scoped token in Vercel, import its one-time value, update consumers, and revoke the old token in Vercel after verification. Integration OAuth cannot manage personal tokens.".into() })),
+        Operation::Guide { .. }=>return Ok(done(Outcome::Guide { url:"https://vercel.com/account/settings/tokens".into(),message:"Create a scoped token in Vercel, save its one-time value here, swap it in where the old one is used, then revoke the old token in Vercel. Integration OAuth cannot manage personal tokens.".into() })),
         Operation::ValidateCredential { resource }=>get(team_url(&format!("/v9/projects/{}",segment(resource)),&call.config)),
-        Operation::WriteSecret { resource,.. }=>get(team_url(&format!("/v10/projects/{}/env?upsert=true",segment(resource)),&call.config)),
         _=>return Ok(error("guided_operation","Use Vercel's dashboard to create or revoke personal tokens.")),
     };
-    match call.operation {
-        Operation::ValidateCredential { .. } => req.auth = RequestAuth::Candidate,
-        Operation::WriteSecret {
-            name, environment, ..
-        } => {
-            if !["production", "preview"].contains(&environment.as_str()) {
-                return Ok(error(
-                    "invalid_environment",
-                    "Secret destinations support production and preview environments.",
-                ));
-            }
-            req.method = "POST".into();
-            req.body = Some(json!({"key":name,"type":"sensitive","target":[environment]}));
-            req.secret = Some(SecretInjection::JsonField {
-                field: "value".into(),
-            });
-        }
-        _ => {}
+    if matches!(call.operation, Operation::ValidateCredential { .. }) {
+        req.auth = RequestAuth::Candidate;
     }
     Ok(request(req, Value::Null))
 }
@@ -222,37 +196,6 @@ pub fn run(call: extism_pdk::Json<Call>) -> extism_pdk::FnResult<extism_pdk::Jso
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn write() -> Call {
-        Call {
-            operation: Operation::WriteSecret {
-                resource: "p".into(),
-                name: "TOKEN".into(),
-                environment: "production".into(),
-            },
-            config: BTreeMap::from([("team_id".into(), "team_1".into())]),
-            cursor: Value::Null,
-            response: None,
-        }
-    }
-    #[test]
-    fn writes_preserve_environment_and_use_secret_type() {
-        let Step::Request { request, .. } = handle(write()) else {
-            panic!()
-        };
-        assert!(request.url.contains("teamId=team_1"));
-        assert_eq!(request.body.unwrap()["type"], "sensitive");
-        assert!(request.secret.is_some());
-    }
-    #[test]
-    fn http_success_with_failed_write_is_not_success() {
-        let mut c = write();
-        c.response = Some(HttpResponse {
-            status: 200,
-            body: json!({"failed":[{"error":"duplicate"}]}).to_string(),
-            headers: BTreeMap::new(),
-        });
-        assert!(matches!(handle(c), Step::Error { .. }));
-    }
     fn respond(operation: Operation, cursor: Value, body: Value) -> Step {
         handle(Call {
             operation,

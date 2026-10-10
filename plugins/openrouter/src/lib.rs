@@ -109,6 +109,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                             id: w["id"].as_str().ok_or("id")?.into(),
                             name: w["name"].as_str().ok_or("name")?.into(),
                             kind: "workspace".into(),
+                            ..Default::default()
                         })
                     })
                     .collect::<Result<Vec<_>, &'static str>>()?;
@@ -117,6 +118,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                         id: DEFAULT.into(),
                         name: "API keys".into(),
                         kind: "workspace".into(),
+                        ..Default::default()
                     });
                 }
                 done(Outcome::Resources(resources))

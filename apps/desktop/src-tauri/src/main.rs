@@ -23,6 +23,8 @@ fn parallel(command: &Command) -> bool {
             | Command::ConnectLocal { .. }
             | Command::ScanSources { .. }
             | Command::Check { .. }
+            | Command::Owners { .. }
+            | Command::CreateResource { .. }
     )
 }
 #[tauri::command]

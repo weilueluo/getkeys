@@ -150,9 +150,6 @@ async function statefulHost(page: Page, data: Snapshot) {
             case 'confirm_deleted':
               data.credentials = data.credentials.filter((k) => k.id !== c.credential_id);
               return null;
-            case 'set_project_folders':
-              data.project_folders = c.folders;
-              return null;
             case 'get_prefs':
               return { mcp_enabled: false };
             case 'agent_status':
@@ -207,10 +204,12 @@ test('a provider without accounts: add, find, check, add by hand, rotate, delete
   await page.getByRole('tab', { name: /^Ready to use/ }).click();
   await page.evaluate(() => ((window as unknown as { reject: boolean }).reject = false));
 
-  // New key offers the provider on its own, with no account to pick.
+  // New key starts with the provider; Groq needs no account, so it goes straight to the key.
   await page.getByRole('button', { name: 'New key' }).click();
   const form = page.getByRole('dialog', { name: 'New key' });
-  await expect(form.getByLabel('Provider')).toHaveValue('plugin:official.groq');
+  await form.getByRole('button', { name: /^Groq/ }).click();
+  await expect(form.locator('.cascade-step.done')).toContainText(['Groq', 'No account', 'Paste']);
+  await expect(form.getByRole('button', { name: 'Change account' })).toHaveCount(0);
   await form.getByLabel('Name').fill('Laptop');
   await form.getByLabel('API key').fill('gsk_pasted');
   await page.screenshot({ path: 'artifacts/journey-new-key.png' });
@@ -267,25 +266,4 @@ test('a provider without accounts: add, find, check, add by hand, rotate, delete
   await removing.getByRole('button', { name: 'Remove Groq' }).click();
   await page.getByRole('button', { name: /^Keys/ }).click();
   await expect(keys.getByRole('listitem')).toHaveCount(0);
-});
-
-test('project folders: add a folder for refresh to read .env files from, then remove it', async ({
-  page,
-}) => {
-  await statefulHost(page, snapshot());
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByText('No folders yet.')).toBeVisible();
-  await page.getByRole('button', { name: 'Add folder' }).click();
-  const adding = page.getByRole('dialog', { name: 'Add a project folder' });
-  await adding.getByLabel('Folder path').fill('C:\\code');
-  await adding.getByRole('button', { name: 'Add folder' }).click();
-  await expect(adding).toHaveCount(0);
-  await expect(page.getByText('C:\\code', { exact: true })).toBeVisible();
-  expect(await sent(page, 'set_project_folders')).toEqual([
-    { kind: 'set_project_folders', folders: ['C:\\code'] },
-  ]);
-  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  await page.getByRole('button', { name: 'Remove C:\\code' }).click();
-  await expect(page.getByText('No folders yet.')).toBeVisible();
 });

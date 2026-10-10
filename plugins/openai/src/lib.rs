@@ -142,6 +142,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                                 id: p["id"].as_str().ok_or("id")?.into(),
                                 name: p["name"].as_str().ok_or("name")?.into(),
                                 kind: "project".into(),
+                                ..Default::default()
                             })
                         })
                         .collect::<Result<Vec<_>, &'static str>>()?;
@@ -149,6 +150,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                         id: ADMIN.into(),
                         name: "Admin keys".into(),
                         kind: "admin_keys".into(),
+                        ..Default::default()
                     });
                     done(Outcome::Resources(resources))
                 }

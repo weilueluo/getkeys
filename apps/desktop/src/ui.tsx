@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useRef,
+  useState,
   type ReactNode,
 } from 'react';
 import { Check, KeyRound, Minus, Search, TriangleAlert, X } from 'lucide-react';
@@ -147,11 +148,13 @@ export function Modal({
   children,
   onClose,
   description,
+  wide = false,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   description?: ReactNode;
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -168,7 +171,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className="modal"
+      className={wide ? 'modal wide' : 'modal'}
       aria-labelledby={titleId}
       onCancel={(e) => {
         e.preventDefault();
@@ -221,6 +224,64 @@ export function Tabs<T extends string>({
           {t.count !== undefined && <span className="count">{t.count}</span>}
         </button>
       ))}
+    </div>
+  );
+}
+
+/** A button that opens a small list of choices beside it. */
+export function Menu({
+  label,
+  button,
+  className = 'icon-button outline',
+  title,
+  align = 'start',
+  children,
+}: {
+  label: string;
+  button: ReactNode;
+  className?: string;
+  title?: string;
+  align?: 'start' | 'end';
+  children: (close: () => void) => ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [open]);
+  return (
+    <div
+      className="menu-anchor"
+      ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) {
+          e.stopPropagation();
+          e.preventDefault();
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        className={className}
+        aria-label={label}
+        title={title ?? label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        {button}
+      </button>
+      {open && (
+        <div className={`menu ${align}`} role="menu" aria-label={label}>
+          {children(() => setOpen(false))}
+        </div>
+      )}
     </div>
   );
 }

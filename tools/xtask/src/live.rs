@@ -1,19 +1,15 @@
 use anyhow::{Context, Result, bail, ensure};
-use getkeys_core::{
-    App, api::*, http::Transport, model::*, new_id, plugins::Registry, vault::Vault,
-};
+use getkeys_core::{App, api::*, model::*, new_id, plugins::Registry, vault::Vault};
 use std::{collections::BTreeMap, path::PathBuf};
 
 const REQUIRED: &[&str] = &[
     "GETKEYS_LIVE_GITHUB_TOKEN",
-    "GETKEYS_LIVE_GITHUB_REPO",
     "GETKEYS_LIVE_AWS_ACCESS_KEY_ID",
     "GETKEYS_LIVE_AWS_SECRET_ACCESS_KEY",
     "GETKEYS_LIVE_AWS_USER",
     "GETKEYS_LIVE_SUPABASE_TOKEN",
     "GETKEYS_LIVE_SUPABASE_PROJECT",
     "GETKEYS_LIVE_VERCEL_TOKEN",
-    "GETKEYS_LIVE_VERCEL_PROJECT",
 ];
 fn env(name: &str) -> Result<String> {
     std::env::var(name).with_context(|| format!("Missing {name}"))
@@ -30,7 +26,7 @@ pub fn run() -> Result<()> {
     );
     ensure!(
         std::env::var("GETKEYS_LIVE_ALLOW_WRITES").as_deref() == Ok("true"),
-        "Set GETKEYS_LIVE_ALLOW_WRITES=true to authorize temporary keys and secrets in the configured sandbox resources"
+        "Set GETKEYS_LIVE_ALLOW_WRITES=true to authorize temporary keys in the configured sandbox accounts"
     );
     let aws_user = env("GETKEYS_LIVE_AWS_USER")?;
     ensure!(
@@ -98,14 +94,7 @@ pub fn run() -> Result<()> {
             "Supabase key lifecycle",
             key_lifecycle(&app, "supabase", &env("GETKEYS_LIVE_SUPABASE_PROJECT")?),
         ),
-        (
-            "GitHub Actions secret",
-            secret_delivery(&app, "github", &env("GETKEYS_LIVE_GITHUB_REPO")?),
-        ),
-        (
-            "Vercel environment variable",
-            secret_delivery(&app, "vercel", &env("GETKEYS_LIVE_VERCEL_PROJECT")?),
-        ),
+        ("Vercel key lifecycle", key_lifecycle(&app, "vercel", "")),
     ] {
         match result {
             Ok(()) => println!("PASS {name}"),
@@ -121,7 +110,7 @@ pub fn run() -> Result<()> {
         errors.join(", ")
     );
     println!(
-        "All four provider API checks passed. Browser consent and deployment health still require the manual checks in docs/live-tests.md."
+        "All provider API checks passed. Browser consent and deployment health still require the manual checks in docs/live-tests.md."
     );
     Ok(())
 }
@@ -206,77 +195,4 @@ fn key_lifecycle(app: &App, provider: &str, resource: &str) -> Result<()> {
         cleanup.join(", ")
     );
     result
-}
-fn secret_delivery(app: &App, provider: &str, resource: &str) -> Result<()> {
-    let name = format!("GETKEYS_LIVE_{}", new_id()?.to_uppercase());
-    let value = format!("test-only-{}", new_id()?);
-    let result = app.execute(
-        provider,
-        Operation::WriteSecret {
-            resource: resource.into(),
-            name: name.clone(),
-            environment: "preview".into(),
-        },
-        None,
-        Some(&value),
-    );
-    let c: Connection = app.vault.get("connection", provider)?;
-    let manifest = app.manifest(&c.view.plugin_id)?;
-    let transport = Transport::new()?;
-    let mut list = get(if provider == "github" {
-        format!("https://api.github.com/repos/{resource}/actions/secrets/{name}")
-    } else {
-        format!(
-            "https://api.vercel.com/v9/projects/{}/env",
-            segment(resource)
-        )
-    });
-    if provider == "vercel"
-        && let Some(team) = c.view.config.get("team_id")
-    {
-        list.url.push_str(&format!("?teamId={}", segment(team)));
-    }
-    if provider == "github" {
-        list.headers
-            .insert("X-GitHub-Api-Version".into(), "2026-03-10".into());
-    }
-    let response = transport.send(list.clone(), &manifest.hosts, &c.auth, None, None)?;
-    let found = response.status == 200;
-    let mut delete = list;
-    if provider == "vercel" && found {
-        let v: serde_json::Value = serde_json::from_str(&response.body)?;
-        if let Some(key) = v["envs"]
-            .as_array()
-            .and_then(|envs| envs.iter().find(|e| e["key"].as_str() == Some(&name)))
-        {
-            let id = key["id"]
-                .as_str()
-                .context("Environment variable ID missing")?;
-            delete.url = format!(
-                "https://api.vercel.com/v9/projects/{}/env/{}",
-                segment(resource),
-                segment(id)
-            );
-            if let Some(team) = c.view.config.get("team_id") {
-                delete.url.push_str(&format!("?teamId={}", segment(team)));
-            }
-        } else {
-            result?;
-            bail!("Vercel did not list the test environment variable");
-        }
-    }
-    if found {
-        delete.method = "DELETE".into();
-        let response = transport.send(delete, &manifest.hosts, &c.auth, None, None)?;
-        ensure!(
-            (200..300).contains(&response.status),
-            "Cleanup failed for sandbox variable {name}. Remove it from the provider dashboard."
-        );
-    }
-    result?;
-    ensure!(
-        found,
-        "Provider did not confirm the test secret in inventory"
-    );
-    Ok(())
 }

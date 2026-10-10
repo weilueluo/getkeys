@@ -161,7 +161,7 @@ impl App {
         )?;
         let mut r = self.rotation_plan(&old, &candidate.view.name, manifest.version)?;
         r.candidate_id = Some(replacement_id.into());
-        r.state = RotationState::Stored;
+        r.state = RotationState::ReadyToRetire;
         self.vault.save_rotation(&r)?;
         self.vault.event("rotation.replacement_selected", &r.id)?;
         Ok(r)
@@ -176,14 +176,6 @@ impl App {
             name: name.into(),
             state: RotationState::Planned,
             candidate_id: None,
-            bindings: self
-                .vault
-                .list::<Binding>("binding")?
-                .into_iter()
-                .filter(|b| b.credential_id == c.view.id)
-                .collect(),
-            updated_bindings: Vec::new(),
-            verified_bindings: Vec::new(),
             created_at: now(),
         })
     }
@@ -191,7 +183,7 @@ impl App {
         let mut r = self.vault.rotation(id)?;
         ensure!(
             r.state == RotationState::ReadyToRetire,
-            "Verify consumers before confirming provider-side revocation"
+            "Create the replacement before confirming provider-side revocation"
         );
         let c: Connection = self.vault.get("connection", &r.connection_id)?;
         let manifest = self.manifest(&c.view.plugin_id)?;
@@ -241,11 +233,6 @@ impl App {
             RotationState::Planned => create(&self.vault, r, |op| {
                 self.execute(&c.view.id, op, None, None)
             }),
-            RotationState::Stored | RotationState::Distributing => {
-                distribute(&self.vault, r, |connection, op, candidate, injected| {
-                    self.execute(connection, op, candidate, injected)
-                })
-            }
             RotationState::ReadyToRetire | RotationState::Deactivated => {
                 ensure!(
                     self.manifest(&c.view.plugin_id)?
@@ -263,36 +250,9 @@ impl App {
                 )
             }
             _ => bail!(
-                "This rotation is waiting for verification or reconciliation; no provider mutation was retried"
+                "This rotation is waiting for reconciliation; no provider mutation was retried"
             ),
         }
-    }
-    pub fn verify_binding(&self, id: &str, binding_id: &str) -> Result<Rotation> {
-        let mut r = self.vault.rotation(id)?;
-        ensure!(
-            r.state == RotationState::AwaitingVerification,
-            "This rotation is not waiting for consumer verification"
-        );
-        ensure!(
-            r.updated_bindings.iter().any(|b| b == binding_id),
-            "This consumer has not been updated"
-        );
-        if !r.verified_bindings.contains(&binding_id.into()) {
-            r.verified_bindings.push(binding_id.into());
-        }
-        let next = if r
-            .bindings
-            .iter()
-            .all(|b| r.verified_bindings.contains(&b.id))
-        {
-            RotationState::ReadyToRetire
-        } else {
-            RotationState::AwaitingVerification
-        };
-        self.vault
-            .transition(&mut r, &RotationState::AwaitingVerification, next)?;
-        self.vault.event("consumer.verified", binding_id)?;
-        Ok(r)
     }
     pub fn reconcile_rotation(&self, id: &str, provider_id: &str) -> Result<Rotation> {
         let mut r = self.vault.rotation(id)?;
@@ -331,7 +291,7 @@ impl App {
         let expected = r.state.clone();
         r.candidate_id = Some(candidate.view.id);
         self.vault
-            .transition(&mut r, &expected, RotationState::Stored)?;
+            .transition(&mut r, &expected, RotationState::ReadyToRetire)?;
         Ok(r)
     }
     pub fn reconcile_retirement(&self, id: &str) -> Result<Rotation> {
@@ -418,77 +378,10 @@ pub fn create(
     let tx = vault.write()?;
     let c = save_remote(vault, &r.connection_id, remote)?;
     r.candidate_id = Some(c.view.id);
-    r.state = RotationState::Stored;
+    r.state = RotationState::ReadyToRetire;
     vault.save_rotation(&r)?;
     vault.event("rotation.created", &r.id)?;
     tx.commit()?;
-    Ok(r)
-}
-
-pub fn distribute(
-    vault: &Vault,
-    mut r: Rotation,
-    mut execute: impl FnMut(&str, Operation, Option<&SecretValue>, Option<&str>) -> Result<Outcome>,
-) -> Result<Rotation> {
-    ensure!(
-        matches!(r.state, RotationState::Stored | RotationState::Distributing),
-        "Replacement is not ready to distribute"
-    );
-    let c: Credential = vault.get(
-        "credential",
-        r.candidate_id
-            .as_deref()
-            .context("Replacement is missing")?,
-    )?;
-    let value = c.value.as_ref().context("Replacement value is missing")?;
-    execute(
-        &r.connection_id,
-        Operation::ValidateCredential {
-            resource: r.resource.clone(),
-        },
-        Some(value),
-        None,
-    )?;
-    let expected = r.state.clone();
-    vault.transition(&mut r, &expected, RotationState::Distributing)?;
-    for binding in r.bindings.clone() {
-        if r.updated_bindings.contains(&binding.id) {
-            continue;
-        }
-        let secret = value
-            .fields
-            .get(&binding.field)
-            .context("Replacement does not contain a bound field")?;
-        if let Destination::Provider {
-            connection_id,
-            resource,
-        } = &binding.destination
-        {
-            execute(
-                connection_id,
-                Operation::WriteSecret {
-                    resource: resource.clone(),
-                    name: binding.variable.clone(),
-                    environment: binding.environment.clone(),
-                },
-                None,
-                Some(secret),
-            )?;
-        }
-        let mut updated = binding.clone();
-        updated.credential_id = c.view.id.clone();
-        let tx = vault.write()?;
-        vault.put("binding", &binding.id, &updated)?;
-        r.updated_bindings.push(binding.id);
-        vault.save_rotation(&r)?;
-        tx.commit()?;
-    }
-    let next = if r.bindings.is_empty() {
-        RotationState::ReadyToRetire
-    } else {
-        RotationState::AwaitingVerification
-    };
-    vault.transition(&mut r, &RotationState::Distributing, next)?;
     Ok(r)
 }
 
@@ -503,7 +396,7 @@ pub fn retire(
             r.state,
             RotationState::ReadyToRetire | RotationState::Deactivated
         ),
-        "Verify all consumers before retiring the old credential"
+        "Create the replacement before retiring the old credential"
     );
     let candidate: Credential = vault.get(
         "credential",
@@ -581,16 +474,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(&dir.path().join("vault.db"), &[1; 32]).unwrap();
         let c = save_remote(&vault, "connection", remote("old")).unwrap();
-        let binding = Binding {
-            id: "binding".into(),
-            credential_id: c.view.id.clone(),
-            field: "token".into(),
-            variable: "TOKEN".into(),
-            project: "app".into(),
-            environment: "production".into(),
-            destination: Destination::Local,
-        };
-        vault.put("binding", &binding.id, &binding).unwrap();
         let r = Rotation {
             id: "rotation".into(),
             credential_id: c.view.id,
@@ -600,9 +483,6 @@ mod tests {
             name: "replacement".into(),
             state: RotationState::Planned,
             candidate_id: None,
-            bindings: vec![binding],
-            updated_bindings: vec![],
-            verified_bindings: vec![],
             created_at: 0,
         };
         vault.save_rotation(&r).unwrap();
@@ -690,27 +570,32 @@ mod tests {
         assert_eq!(calls, 1);
     }
     #[test]
-    fn replacement_is_saved_and_consumers_must_be_verified_before_retirement() {
+    fn replacement_is_saved_and_waits_for_the_go_ahead_before_retirement() {
         let (_dir, vault, r) = fixture();
         let r = create(&vault, r, |_| Ok(Outcome::Credential(remote("new")))).unwrap();
-        assert!(
-            vault
-                .get::<Credential>("credential", r.candidate_id.as_ref().unwrap())
-                .unwrap()
-                .value
-                .is_some()
-        );
-        let r = distribute(&vault, r, |_, _, _, _| Ok(Outcome::Done)).unwrap();
-        assert_eq!(r.state, RotationState::AwaitingVerification);
-        let mut calls = 0;
-        assert!(
-            retire(&vault, r, true, |_, _| {
-                calls += 1;
-                Ok(Outcome::Done)
-            })
-            .is_err()
-        );
-        assert_eq!(calls, 0);
+        assert_eq!(r.state, RotationState::ReadyToRetire);
+        let candidate: Credential = vault
+            .get("credential", r.candidate_id.as_ref().unwrap())
+            .unwrap();
+        assert!(candidate.value.is_some());
+        let old: Credential = vault.get("credential", &r.credential_id).unwrap();
+        assert!(!old.view.retired && old.value.is_some());
+    }
+    #[test]
+    fn rotations_saved_by_earlier_versions_resume_at_retirement() {
+        for old in ["stored", "distributing", "awaiting_verification"] {
+            let state: RotationState =
+                serde_json::from_value(serde_json::json!({ "kind": old })).unwrap();
+            assert_eq!(state, RotationState::ReadyToRetire);
+        }
+        let saved = serde_json::json!({
+            "id": "r", "credential_id": "c", "connection_id": "x", "resource": "",
+            "plugin_version": "1", "name": "n", "state": { "kind": "awaiting_verification" },
+            "candidate_id": "new", "bindings": [], "updated_bindings": [],
+            "verified_bindings": [], "created_at": 0
+        });
+        let r: Rotation = serde_json::from_value(saved).unwrap();
+        assert_eq!(r.state, RotationState::ReadyToRetire);
     }
     #[test]
     fn failure_before_a_write_keeps_the_plan_retryable() {
@@ -740,36 +625,9 @@ mod tests {
         );
     }
     #[test]
-    fn failed_consumer_update_preserves_old_key_and_resumes_distribution() {
-        let (_dir, vault, mut r) = fixture();
-        r.bindings[0].destination = Destination::Provider {
-            connection_id: "destination".into(),
-            resource: "repo".into(),
-        };
-        vault.save_rotation(&r).unwrap();
-        let r = create(&vault, r, |_| Ok(Outcome::Credential(remote("new")))).unwrap();
-        assert!(
-            distribute(&vault, r, |_, op, _, _| {
-                if matches!(op, Operation::WriteSecret { .. }) {
-                    bail!("consumer unavailable");
-                }
-                Ok(Outcome::Done)
-            })
-            .is_err()
-        );
-        let r = vault.rotation("rotation").unwrap();
-        assert_eq!(r.state, RotationState::Distributing);
-        let old: Credential = vault.get("credential", &r.credential_id).unwrap();
-        assert!(!old.view.retired && old.value.is_some());
-        let r = distribute(&vault, r, |_, _, _, _| Ok(Outcome::Done)).unwrap();
-        assert_eq!(r.state, RotationState::AwaitingVerification);
-        assert_eq!(r.updated_bindings, ["binding"]);
-    }
-    #[test]
     fn verified_rotation_deactivates_before_deleting_and_erases_old_value() {
         let (dir, vault, r) = fixture();
         let r = create(&vault, r, |_| Ok(Outcome::Credential(remote("new")))).unwrap();
-        let r = distribute(&vault, r, |_, _, _, _| Ok(Outcome::Done)).unwrap();
         let app = App {
             vault,
             registry: crate::plugins::Registry::open(
@@ -778,8 +636,6 @@ mod tests {
             )
             .unwrap(),
         };
-        let r = app.verify_binding(&r.id, "binding").unwrap();
-        assert_eq!(r.state, RotationState::ReadyToRetire);
         let mut mutations = Vec::new();
         let r = retire(&app.vault, r, true, |op, _| {
             if let Operation::DeactivateCredential { credential, .. } = op {
@@ -801,26 +657,17 @@ mod tests {
         assert_eq!(mutations, ["old", "old"]);
         let old: Credential = app.vault.get("credential", &r.credential_id).unwrap();
         assert!(old.view.retired && old.value.is_none());
-        assert_eq!(
-            app.environment("app", "production").unwrap()["TOKEN"],
-            "secret-new"
-        );
     }
     #[test]
-    fn active_rotations_freeze_source_values_consumers_and_destination_plugins() {
-        let (dir, vault, mut r) = fixture();
-        r.bindings[0].destination = Destination::Provider {
-            connection_id: "destination".into(),
-            resource: "repo".into(),
-        };
-        vault.save_rotation(&r).unwrap();
+    fn active_rotations_freeze_source_values_and_their_plugin() {
+        let (dir, vault, _) = fixture();
         vault
             .put(
                 "connection",
-                "destination",
+                "connection",
                 &Connection {
                     view: ConnectionView {
-                        id: "destination".into(),
+                        id: "connection".into(),
                         plugin_id: "official.github".into(),
                         name: "Destination".into(),
                         state: ConnectionState::Connected,
@@ -854,19 +701,10 @@ mod tests {
                 .contains("active rotations")
         );
         assert!(
-            app.disconnect("destination")
+            app.disconnect("connection")
                 .unwrap_err()
                 .to_string()
                 .contains("active rotations")
-        );
-        let mut new_binding = r.bindings[0].clone();
-        new_binding.id.clear();
-        new_binding.destination = Destination::Local;
-        assert!(
-            app.save_binding(new_binding)
-                .unwrap_err()
-                .to_string()
-                .contains("active rotation")
         );
         assert!(
             app.import(ImportInput {

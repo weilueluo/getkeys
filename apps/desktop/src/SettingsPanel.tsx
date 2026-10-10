@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Download, FolderOpen, Plus, Upload, X } from 'lucide-react';
+import { Copy, Download, FolderOpen, Upload } from 'lucide-react';
 import type { Controller } from './controller';
 import { request } from './bridge';
 import { Field, Modal, PageHeader } from './ui';
@@ -7,10 +7,6 @@ import { ShellSettings } from './ShellSettings';
 import { AgentConnect } from './AgentConnect';
 export function SettingsPanel({ snapshot, busy, perform }: Controller) {
   const [backup, setBackup] = useState<'export' | 'restore'>();
-  const [addingFolder, setAddingFolder] = useState(false);
-  const folders = snapshot.project_folders;
-  const saveFolders = (next: string[], message: string) =>
-    perform(() => request({ kind: 'set_project_folders', folders: next }), message);
   return (
     <>
       <PageHeader title="Settings" />
@@ -69,70 +65,8 @@ export function SettingsPanel({ snapshot, busy, perform }: Controller) {
           </div>
         </div>
       </section>
-      <section className="settings-section">
-        <div className="settings-label">
-          <h2>Project folders</h2>
-          <p>
-            Refresh also reads .env files in these folders and their projects, and lists the
-            provider keys it finds.
-          </p>
-        </div>
-        <div className="settings-content">
-          {folders.length === 0 && (
-            <div className="settings-row">
-              <small>No folders yet.</small>
-            </div>
-          )}
-          {folders.map((folder) => (
-            <div className="settings-row" key={folder}>
-              <code className="path" title={folder}>
-                {folder}
-              </code>
-              <button
-                className="icon-button outline"
-                aria-label={`Remove ${folder}`}
-                title="Remove"
-                disabled={busy}
-                onClick={() =>
-                  void saveFolders(
-                    folders.filter((f) => f !== folder),
-                    'Folder removed',
-                  )
-                }
-              >
-                <X size={14} strokeWidth={1.75} />
-              </button>
-            </div>
-          ))}
-          <div className="settings-row">
-            <button className="button outline" onClick={() => setAddingFolder(true)}>
-              <Plus size={14} strokeWidth={1.75} /> Add folder
-            </button>
-          </div>
-        </div>
-      </section>
       <ShellSettings busy={busy} perform={perform} />
       <AgentConnect busy={busy} perform={perform} />
-      {addingFolder && (
-        <Modal title="Add a project folder" onClose={() => setAddingFolder(false)}>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const path = String(new FormData(e.currentTarget).get('path')).trim();
-              void saveFolders([...folders, path], 'Folder added').then((result) => {
-                if (result !== undefined) setAddingFolder(false);
-              });
-            }}
-          >
-            <Field label="Folder path">
-              <input name="path" placeholder="C:\Users\you\code" required autoFocus />
-            </Field>
-            <button className="button full" disabled={busy}>
-              Add folder
-            </button>
-          </form>
-        </Modal>
-      )}
       {backup && (
         <Modal
           title={backup === 'export' ? 'Export encrypted backup' : 'Restore your vault'}

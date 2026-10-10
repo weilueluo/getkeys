@@ -639,3 +639,29 @@ fn the_native_host_refuses_other_extensions() {
     assert!(!refused.status.success());
     assert!(refused.stdout.is_empty());
 }
+
+#[test]
+fn new_keys_come_from_a_connected_provider_that_makes_them() {
+    let journey = Journey::new();
+    let stderr = |args: &[&str]| {
+        let out = journey.run(args, None);
+        assert!(!out.status.success(), "{args:?} should fail");
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    assert!(
+        stderr(&["new", "supabase"]).contains("Add Supabase first: getkeys providers add supabase")
+    );
+    let app = App::open(journey.dir().into(), registry()).unwrap();
+    for id in ["official.supabase", "official.github"] {
+        app.dispatch(getkeys_core::commands::Command::Install {
+            plugin_id: id.into(),
+            accept_permissions: true,
+        })
+        .unwrap();
+    }
+    drop(app);
+    assert!(stderr(&["new", "supabase"]).contains("Connect a Supabase account first"));
+    assert!(stderr(&["new", "github"]).contains("GitHub doesn't make keys through its API"));
+    assert!(stderr(&["new", "supabase", "--region", "emea"]).contains("--new-project"));
+    assert!(stderr(&["new", "nothing"]).contains("No provider is called nothing"));
+}

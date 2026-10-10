@@ -6,7 +6,6 @@ use crate::{
     model::*,
     new_id,
     plugins::Registry,
-    projects,
     vault::Vault,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -111,35 +110,10 @@ impl App {
                 })
                 .collect(),
             connections: connections.into_iter().map(|c| c.view).collect(),
-            bindings: self.vault.list("binding")?,
             rotations: self.vault.rotations()?,
             activity,
             vault_path: self.vault.path().display().to_string(),
-            project_folders: self.project_folders(),
         })
-    }
-    fn project_folders(&self) -> Vec<String> {
-        self.vault
-            .get("setting", "project_folders")
-            .unwrap_or_default()
-    }
-    /// Chooses the folders whose `.env` files Refresh looks through for keys.
-    pub fn set_project_folders(&self, folders: Vec<String>) -> Result<Vec<String>> {
-        let mut folders: Vec<String> = folders
-            .into_iter()
-            .map(|f| f.trim().to_owned())
-            .filter(|f| !f.is_empty())
-            .collect();
-        folders.sort();
-        folders.dedup();
-        for f in &folders {
-            ensure!(
-                PathBuf::from(f).is_dir(),
-                "{f} isn't a folder on this device"
-            );
-        }
-        self.vault.put("setting", "project_folders", &folders)?;
-        Ok(folders)
     }
     /// Every provider's manifest, as installed when it is.
     pub fn manifests(&self) -> Vec<Manifest> {
@@ -205,16 +179,6 @@ impl App {
                     .any(|x| x.view.id == c.view.connection_id)
             {
                 self.vault.remove("credential", &c.view.id)?;
-            }
-        }
-        for b in self.vault.list::<Binding>("binding")? {
-            if !self
-                .vault
-                .list::<Credential>("credential")?
-                .iter()
-                .any(|c| c.view.id == b.credential_id)
-            {
-                self.vault.remove("binding", &b.id)?;
             }
         }
         for c in &connections {
@@ -299,13 +263,6 @@ impl App {
             .collect())
     }
     pub fn connect_local(&self, source: &str, existing: Option<&str>) -> Result<AuthProgress> {
-        if projects::is_project(source) {
-            let (plugin_id, name, value) = projects::load(&self.manifests(), source)?;
-            self.ensure_installed(&plugin_id)?;
-            return Ok(AuthProgress::KeySaved {
-                credential: Box::new(self.save_found(&plugin_id, source, &name, value)?),
-            });
-        }
         let (plugin_id, found) = discover::load(&self.manifests(), source)?;
         self.ensure_installed(&plugin_id)?;
         let id = existing.map_or_else(new_id, |id| Ok(id.to_owned()))?;
@@ -846,7 +803,7 @@ impl App {
         };
         // The same key is often in several places; it is offered once.
         let mut seen = Vec::new();
-        let mut found: Vec<Discovery> = discover::scan(&manifests)
+        let found: Vec<Discovery> = discover::scan(&manifests)
             .into_iter()
             .filter(|d| wanted(d) && (d.key || !known(&d.id)))
             .filter(|d| match discover::load(&manifests, &d.id) {
@@ -860,12 +817,6 @@ impl App {
                 _ => false,
             })
             .collect();
-        for (d, value) in projects::scan(&self.project_folders(), &manifests) {
-            if wanted(&d) && fresh(&d, &value) && !seen.contains(&value.fields) {
-                seen.push(value.fields);
-                found.push(d);
-            }
-        }
         Ok(found)
     }
     /// Text to put on the clipboard: one field's value, or every exported field as `.env` lines.
@@ -1353,81 +1304,6 @@ impl App {
         open::that_detached(url)?;
         Ok(message)
     }
-    pub fn save_binding(&self, mut binding: Binding) -> Result<Binding> {
-        ensure!(
-            valid_variable(&binding.variable),
-            "Use a valid environment variable name, such as API_TOKEN"
-        );
-        ensure!(
-            !binding.project.trim().is_empty() && !binding.environment.trim().is_empty(),
-            "Project and environment are required"
-        );
-        let c: Credential = self.vault.get("credential", &binding.credential_id)?;
-        ensure!(!c.view.retired, "Cannot bind a retired credential");
-        ensure!(
-            c.value
-                .as_ref()
-                .is_some_and(|v| v.fields.contains_key(&binding.field)),
-            "Retrieve or import this credential before binding a field"
-        );
-        if let Destination::Provider { connection_id, .. } = &binding.destination {
-            let connection: Connection = self.vault.get("connection", connection_id)?;
-            ensure!(
-                self.manifest(&connection.view.plugin_id)?
-                    .operations
-                    .contains(&OperationKind::WriteSecret),
-                "Destination provider cannot write secrets"
-            );
-        }
-        ensure!(
-            !self.vault.rotations()?.iter().any(|r| r.is_active()
-                && (r.uses_credential(&binding.credential_id)
-                    || r.bindings.iter().any(|b| b.id == binding.id))),
-            "Finish the active rotation before editing this binding"
-        );
-        for other in self.vault.list::<Binding>("binding")? {
-            ensure!(
-                other.id == binding.id
-                    || other.project != binding.project
-                    || other.environment != binding.environment
-                    || other.variable != binding.variable,
-                "This project environment already has a binding for that variable"
-            );
-        }
-        if binding.id.is_empty() {
-            binding.id = new_id()?;
-        }
-        self.vault.put("binding", &binding.id, &binding)?;
-        Ok(binding)
-    }
-    pub fn environment(
-        &self,
-        project: &str,
-        environment: &str,
-    ) -> Result<BTreeMap<String, String>> {
-        let bindings = self.vault.list::<Binding>("binding")?;
-        let mut values = BTreeMap::new();
-        for b in bindings.iter().filter(|b| {
-            b.project == project
-                && b.environment == environment
-                && matches!(b.destination, Destination::Local)
-        }) {
-            let secret = self.secret(&b.credential_id)?;
-            let value = secret
-                .fields
-                .get(&b.field)
-                .context("Bound credential field is unavailable")?;
-            ensure!(
-                values.insert(b.variable.clone(), value.clone()).is_none(),
-                "Duplicate environment binding"
-            );
-        }
-        ensure!(
-            !values.is_empty(),
-            "No local bindings match this project and environment"
-        );
-        Ok(values)
-    }
     /// Signs the account in with an access token GetKeys creates for itself, so it no longer
     /// borrows a CLI session or a personal token. Doing it again rotates that token.
     pub fn dedicate(&self, id: &str) -> Result<ConnectionView> {
@@ -1604,11 +1480,6 @@ impl App {
     fn forget(&self, c: &Credential) -> Result<()> {
         let tx = self.vault.write()?;
         crate::rotation::mark_retired(&self.vault, c)?;
-        for b in self.vault.list::<Binding>("binding")? {
-            if b.credential_id == c.view.id {
-                self.vault.remove("binding", &b.id)?;
-            }
-        }
         self.vault.event("credential.deleted", &c.view.id)?;
         tx.commit()?;
         Ok(())
@@ -1839,9 +1710,9 @@ pub fn valid_variable(s: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    fn app() -> (tempfile::TempDir, App) {
+    pub(crate) fn app() -> (tempfile::TempDir, App) {
         let dir = tempfile::tempdir().unwrap();
         let app = App {
             vault: Vault::open(&dir.path().join("vault.db"), &[3; 32]).unwrap(),

@@ -38,7 +38,11 @@ validate: Validate | null,
 /**
  * Where this provider's keys and sign-ins live on a device.
  */
-sources: Array<Source>, };
+sources: Array<Source>, 
+/**
+ * What GetKeys can create in the account, for providers with `create_resource`.
+ */
+new_resource?: NewResource | null, };
 export type ProviderKind = "managed" | "declarative";
 export type AuthMethod = { "kind": "token" } | { "kind": "device", device_url: string, token_url: string, client_id_env: string, scopes: string, } | { "kind": "broker", registration: string, } | { "kind": "aws_sso" };
 export type Validate = { url: string, 
@@ -129,8 +133,42 @@ secret: boolean,
  * Environment variable used when exporting this field, if any.
  */
 env: string, };
-export type OperationKind = "identity" | "list_resources" | "list_credentials" | "read_credential" | "create_credential" | "validate_credential" | "deactivate_credential" | "revoke_credential" | "rotate_credential" | "write_secret" | "guide";
-export type Resource = { id: string, name: string, kind: string, };
+export type NewResource = { 
+/**
+ * What the provider calls it, such as "repository" or "project".
+ */
+noun: string, 
+/**
+ * Choices shown when creating one, sent as `CreateResource` options.
+ */
+options: Array<ResourceOption>, 
+/**
+ * A secret GetKeys makes up, sends in the request body field `key` and saves as a key,
+ * such as a database password. The provider code never sees it.
+ */
+generated: ConfigField | null, };
+export type ResourceOption = { key: string, label: string, choices: Array<Choice>, default: string, };
+export type Choice = { value: string, label: string, };
+export type OperationKind = "identity" | "list_resources" | "list_credentials" | "read_credential" | "create_credential" | "validate_credential" | "deactivate_credential" | "revoke_credential" | "rotate_credential" | "write_secret" | "guide" | "list_owners" | "create_resource";
+export type Resource = { id: string, name: string, kind: string, 
+/**
+ * Where to open it on the provider's site.
+ */
+url: string, 
+/**
+ * Still being set up; its keys may not exist yet.
+ */
+pending: boolean, 
+/**
+ * Something the user should know about how it was created.
+ */
+note: string, };
+export type Owner = { id: string, name: string, };
+export type Created = { resource: Resource, 
+/**
+ * A secret GetKeys made up for it, such as a database password, saved as a key.
+ */
+generated: CredentialView | null, };
 export type PluginView = { manifest: Manifest, installed: boolean, update_available: boolean, 
 /**
  * Browser sign-in works only when its OAuth registration is configured.
@@ -187,20 +225,14 @@ value: string | null,
  * Whether this device holds the value.
  */
 available: boolean, };
-export type Binding = { id: string, credential_id: string, field: string, variable: string, project: string, environment: string, destination: Destination, };
-export type Destination = { "kind": "local" } | { "kind": "provider", connection_id: string, resource: string, };
-export type Rotation = { id: string, credential_id: string, connection_id: string, resource: string, plugin_version: string, name: string, state: RotationState, candidate_id: string | null, bindings: Array<Binding>, updated_bindings: Array<string>, verified_bindings: Array<string>, created_at: number, };
-export type RotationState = { "kind": "planned" } | { "kind": "creating" } | { "kind": "uncertain", action: string, } | { "kind": "stored" } | { "kind": "distributing" } | { "kind": "awaiting_verification" } | { "kind": "ready_to_retire" } | { "kind": "deactivating" } | { "kind": "deactivated" } | { "kind": "retiring" } | { "kind": "complete" } | { "kind": "aborted" };
+export type Rotation = { id: string, credential_id: string, connection_id: string, resource: string, plugin_version: string, name: string, state: RotationState, candidate_id: string | null, created_at: number, };
+export type RotationState = { "kind": "planned" } | { "kind": "creating" } | { "kind": "uncertain", action: string, } | { "kind": "ready_to_retire" } | { "kind": "deactivating" } | { "kind": "deactivated" } | { "kind": "retiring" } | { "kind": "complete" } | { "kind": "aborted" };
 export type Activity = { id: string, timestamp: number, action: string, subject: string, };
-export type Snapshot = { plugins: Array<PluginView>, connections: Array<ConnectionView>, credentials: Array<CredentialView>, bindings: Array<Binding>, rotations: Array<Rotation>, activity: Array<Activity>, 
+export type Snapshot = { plugins: Array<PluginView>, connections: Array<ConnectionView>, credentials: Array<CredentialView>, rotations: Array<Rotation>, activity: Array<Activity>, 
 /**
  * Where the encrypted vault file lives.
  */
-vault_path: string, 
-/**
- * Folders whose `.env` files are scanned for keys.
- */
-project_folders: Array<string>, };
+vault_path: string, };
 export type AuthProgress = { "kind": "browser", flow_id: string, url: string, user_code: string | null, interval: number, } | { "kind": "select_role", flow_id: string, roles: Array<RoleChoice>, } | { "kind": "connected", connection: ConnectionView, } | { "kind": "pending", interval: number, } | { "kind": "key_saved", credential: CredentialView, };
 export type RoleChoice = { account_id: string, account_name: string, role: string, };
 export type ImportInput = { connection_id: string, provider_id: string | null, resource: string, name: string, project: string, environment: string, fields: { [key in string]: string }, };
@@ -225,4 +257,4 @@ path: string,
  * Whether that file already starts GetKeys.
  */
 configured: boolean, };
-export type Command = { "kind": "snapshot" } | { "kind": "discover" } | { "kind": "connect_local", source_id: string, connection_id: string | null, } | { "kind": "open_token_page", plugin_id: string, } | { "kind": "connect_token", plugin_id: string, fields: { [key in string]: string }, connection_id: string | null, } | { "kind": "reconnect", connection_id: string, } | { "kind": "install", plugin_id: string, accept_permissions: boolean, } | { "kind": "uninstall", plugin_id: string, } | { "kind": "begin_auth", plugin_id: string, config: { [key in string]: string }, } | { "kind": "poll_auth", flow_id: string, } | { "kind": "choose_role", flow_id: string, account_id: string, role: string, } | { "kind": "cancel_auth", flow_id: string, } | { "kind": "resources", connection_id: string, } | { "kind": "sync", connection_id: string, resource: string, } | { "kind": "scan_sources", plugin_id: string | null, } | { "kind": "dedicate", connection_id: string, } | { "kind": "delete", credential_id: string, } | { "kind": "confirm_deleted", credential_id: string, } | { "kind": "import", input: ImportInput, } | { "kind": "create", connection_id: string, resource: string, name: string, } | { "kind": "reveal", credential_id: string, } | { "kind": "guide", connection_id: string, resource: string, } | { "kind": "save_binding", binding: Binding, } | { "kind": "remove_binding", binding_id: string, } | { "kind": "plan_rotation", credential_id: string, name: string, } | { "kind": "plan_replacement", credential_id: string, replacement_id: string, } | { "kind": "confirm_manual_retirement", rotation_id: string, } | { "kind": "advance_rotation", rotation_id: string, } | { "kind": "verify_binding", rotation_id: string, binding_id: string, } | { "kind": "reconcile_rotation", rotation_id: string, provider_id: string, } | { "kind": "reconcile_retirement", rotation_id: string, } | { "kind": "abort_rotation", rotation_id: string, } | { "kind": "disconnect", connection_id: string, } | { "kind": "export", path: string, passphrase: string, } | { "kind": "check", credential_id: string, } | { "kind": "set_groups", credential_id: string, groups: Array<string>, } | { "kind": "save_custom", credential_id: string | null, name: string, fields: Array<CustomField>, } | { "kind": "save_key", credential_id: string | null, plugin_id: string, name: string, fields: { [key in string]: string }, } | { "kind": "rotate_now", credential_id: string, } | { "kind": "open_vault_folder" } | { "kind": "set_project_folders", folders: Array<string>, } | { "kind": "restore", path: string, passphrase: string, } | { "kind": "resolve", lines: Array<EnvLine>, via: string | null, } | { "kind": "export_env", lines: Array<EnvLine>, via: string | null, } | { "kind": "get_prefs" } | { "kind": "set_prefs", prefs: Prefs, } | { "kind": "agent_status" } | { "kind": "connect_agent", client: AgentClient, };
+export type Command = { "kind": "snapshot" } | { "kind": "discover" } | { "kind": "connect_local", source_id: string, connection_id: string | null, } | { "kind": "open_token_page", plugin_id: string, } | { "kind": "connect_token", plugin_id: string, fields: { [key in string]: string }, connection_id: string | null, } | { "kind": "reconnect", connection_id: string, } | { "kind": "install", plugin_id: string, accept_permissions: boolean, } | { "kind": "uninstall", plugin_id: string, } | { "kind": "begin_auth", plugin_id: string, config: { [key in string]: string }, } | { "kind": "poll_auth", flow_id: string, } | { "kind": "choose_role", flow_id: string, account_id: string, role: string, } | { "kind": "cancel_auth", flow_id: string, } | { "kind": "resources", connection_id: string, } | { "kind": "sync", connection_id: string, resource: string, } | { "kind": "scan_sources", plugin_id: string | null, } | { "kind": "dedicate", connection_id: string, } | { "kind": "delete", credential_id: string, } | { "kind": "confirm_deleted", credential_id: string, } | { "kind": "import", input: ImportInput, } | { "kind": "create", connection_id: string, resource: string, name: string, } | { "kind": "owners", connection_id: string, } | { "kind": "create_resource", connection_id: string, owner: string, name: string, options: { [key in string]: string }, } | { "kind": "reveal", credential_id: string, } | { "kind": "guide", connection_id: string, resource: string, } | { "kind": "plan_rotation", credential_id: string, name: string, } | { "kind": "plan_replacement", credential_id: string, replacement_id: string, } | { "kind": "confirm_manual_retirement", rotation_id: string, } | { "kind": "advance_rotation", rotation_id: string, } | { "kind": "reconcile_rotation", rotation_id: string, provider_id: string, } | { "kind": "reconcile_retirement", rotation_id: string, } | { "kind": "abort_rotation", rotation_id: string, } | { "kind": "disconnect", connection_id: string, } | { "kind": "export", path: string, passphrase: string, } | { "kind": "check", credential_id: string, } | { "kind": "set_groups", credential_id: string, groups: Array<string>, } | { "kind": "save_custom", credential_id: string | null, name: string, fields: Array<CustomField>, } | { "kind": "save_key", credential_id: string | null, plugin_id: string, name: string, fields: { [key in string]: string }, } | { "kind": "rotate_now", credential_id: string, } | { "kind": "open_vault_folder" } | { "kind": "restore", path: string, passphrase: string, } | { "kind": "resolve", lines: Array<EnvLine>, via: string | null, } | { "kind": "export_env", lines: Array<EnvLine>, via: string | null, } | { "kind": "get_prefs" } | { "kind": "set_prefs", prefs: Prefs, } | { "kind": "agent_status" } | { "kind": "connect_agent", client: AgentClient, };

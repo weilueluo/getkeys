@@ -154,6 +154,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                             id: u.user_name.clone(),
                             name: u.user_name,
                             kind: "iam_user".into(),
+                            ..Default::default()
                         }),
                 );
                 if r.list_users_result.is_truncated {

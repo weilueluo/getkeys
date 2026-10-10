@@ -2,6 +2,7 @@ mod client;
 mod keys;
 mod mcp;
 mod native;
+mod new;
 mod ops;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -118,6 +119,30 @@ enum Cli {
         /// Finish deleting a key you revoked on the provider's page
         #[arg(long)]
         confirm: bool,
+    },
+    /// Ask a provider for a new key and save it.
+    New {
+        /// Provider ID, such as openai
+        provider: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// The account to create it in, when several are connected
+        #[arg(long)]
+        account: Option<String>,
+        /// The project the key belongs to, for providers whose keys belong to one
+        #[arg(long, conflicts_with = "new_project")]
+        project: Option<String>,
+        /// Make a new project with this name for the key
+        #[arg(long, value_name = "NAME")]
+        new_project: Option<String>,
+        /// The organisation that owns the new project
+        #[arg(long, requires = "new_project")]
+        owner: Option<String>,
+        /// Where the new project runs, such as americas, emea or apac
+        #[arg(long, requires = "new_project")]
+        region: Option<String>,
+        #[arg(long)]
+        group: Vec<String>,
     },
     /// Manage providers.
     Providers {
@@ -301,18 +326,7 @@ fn run() -> Result<()> {
                 Some(provider) => add_key(client, &provider, name, fields)?,
                 None => add_custom(client, name, custom)?,
             };
-            if !group.is_empty() {
-                client.call(Command::SetGroups {
-                    credential_id: saved.id.clone(),
-                    groups: group,
-                })?;
-            }
-            let snapshot = client.snapshot()?;
-            let reference = keys::keys(&snapshot)
-                .iter()
-                .find(|k| k.c.id == saved.id)
-                .map_or_else(|| saved.id.clone(), |k| k.reference.clone());
-            println!("Saved {} as {reference}", saved.name);
+            saved_as(client, saved, group)?;
         }
         Cli::Rm { reference, confirm } => {
             let id = key_id(client, &reference)?;
@@ -327,6 +341,29 @@ fn run() -> Result<()> {
                     ),
                 }
             }
+        }
+        Cli::New {
+            provider,
+            name,
+            account,
+            project,
+            new_project,
+            owner,
+            region,
+            group,
+        } => {
+            let snapshot = client.snapshot()?;
+            let request = new::Request {
+                plugin_id: plugin_id(&snapshot, &provider)?,
+                name,
+                account,
+                project,
+                new_project,
+                owner,
+                region,
+            };
+            let saved = new::run(client, request, &mut |line| eprintln!("{line}"))?;
+            saved_as(client, saved, group)?;
         }
         Cli::Providers { action } => providers(client, action)?,
         Cli::Backup { path } => {
@@ -434,6 +471,23 @@ fn write_out(output: Option<PathBuf>, text: &str) -> Result<()> {
 
 fn absolute(path: PathBuf) -> Result<String> {
     Ok(std::path::absolute(path)?.display().to_string())
+}
+
+/// Files a new key under its groups and prints its reference.
+fn saved_as(client: &mut Client, saved: CredentialView, group: Vec<String>) -> Result<()> {
+    if !group.is_empty() {
+        client.call(Command::SetGroups {
+            credential_id: saved.id.clone(),
+            groups: group,
+        })?;
+    }
+    let snapshot = client.snapshot()?;
+    let reference = keys::keys(&snapshot)
+        .iter()
+        .find(|k| k.c.id == saved.id)
+        .map_or_else(|| saved.id.clone(), |k| k.reference.clone());
+    println!("Saved {} as {reference}", saved.name);
+    Ok(())
 }
 
 fn key_id(client: &mut Client, reference: &str) -> Result<String> {

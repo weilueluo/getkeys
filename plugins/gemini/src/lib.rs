@@ -122,6 +122,7 @@ fn execute(call: Call) -> Result<Step, &'static str> {
                         id: id.into(),
                         name: p["name"].as_str().unwrap_or(id).into(),
                         kind: "project".into(),
+                        ..Default::default()
                     });
                 }
                 match next {

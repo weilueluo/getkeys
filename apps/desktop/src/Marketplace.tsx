@@ -125,7 +125,7 @@ export function Marketplace({
                   )}
                 </div>
                 <div className="provider-actions">
-                  {p.manifest.token_page && (
+                  {p.installed && p.manifest.token_page && (
                     <button
                       className="button outline"
                       title={`Open the ${p.manifest.name} page where its keys are made`}

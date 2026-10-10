@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ArrowUpRight,
   Check,
@@ -9,24 +9,21 @@ import {
   Eye,
   EyeOff,
   ListChecks,
-  Lock,
-  LockOpen,
+  ListFilter,
   PenLine,
   Plus,
   RefreshCw,
   RotateCw,
   SquareTerminal,
   Trash2,
-  X,
 } from 'lucide-react';
 import type {
-  Binding,
   ConnectionView,
   CredentialView,
   Deletion,
   KeyField,
   Manifest,
-  Resource,
+  PluginView,
   Rotation,
 } from './types';
 import type { Controller } from './controller';
@@ -36,6 +33,7 @@ import {
   Empty,
   Field,
   inputs,
+  Menu,
   Modal,
   PageHeader,
   ProviderMark,
@@ -43,6 +41,7 @@ import {
   Tabs,
 } from './ui';
 import { formatDay, isFinished, RotationProgress, rotationsFor } from './RotationProgress';
+import { CustomKeyForm, NewKeyDialog } from './NewKey';
 import {
   COPIED,
   CUSTOM,
@@ -60,8 +59,6 @@ function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
-const resourceLabel = (kind?: string) =>
-  kind ? sentence(kind).replace(/^Iam\b/, 'IAM') : 'Resource';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 type Item = {
@@ -92,6 +89,14 @@ const storedGroups = (): string[] => {
     return [];
   }
 };
+/** Narrows the keys in the tab being viewed. */
+type Filter = { providers: string[]; states: Status[] };
+type Status = 'invalid' | 'rotating';
+const NO_FILTER: Filter = { providers: [], states: [] };
+const STATUSES: { id: Status; label: string }[] = [
+  { id: 'invalid', label: 'Invalid' },
+  { id: 'rotating', label: 'Rotating' },
+];
 /** Which keys Refresh covers. */
 export type RefreshScope = { connections?: string[]; keys?: string[]; label?: string };
 
@@ -100,6 +105,8 @@ type Props = Controller & {
   searchField: ReactNode;
   browse: () => void;
   refreshKeys: (scope?: RefreshScope) => void;
+  /** Connects a provider, from this device's sign-ins or by signing in. */
+  add: (plugin: PluginView) => void;
   /** A key to show, from a getkeys://key link. */
   focus?: { id: string };
 };
@@ -111,6 +118,7 @@ export function VaultPanel({
   searchField,
   browse,
   refreshKeys,
+  add,
   focus,
 }: Props) {
   const [view, setView] = useState<View>('ready');
@@ -118,8 +126,10 @@ export function VaultPanel({
   const [naming, setNaming] = useState(false);
   const [picking, setPicking] = useState<string>();
   const [open, setOpen] = useState('');
-  const [form, setForm] = useState<{ credential?: CredentialView }>();
+  const [editing, setEditing] = useState<CredentialView>();
+  const [adding, setAdding] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [filter, setFilter] = useState<Filter>(NO_FILTER);
   const query = search.trim().toLowerCase();
   const all: Item[] = snapshot.credentials
     .flatMap<Item>((c) => {
@@ -204,7 +214,27 @@ export function VaultPanel({
   const shown: View = activeGroup ? view : view === 'empty' && hasEmpty ? 'empty' : 'ready';
   const inView = (i: Item, v: View) =>
     v.startsWith('group:') ? i.c.groups.includes(v.slice(6)) : i.secretless === (v === 'empty');
-  const items = searched.filter((i) => inView(i, shown));
+  const inTab = searched.filter((i) => inView(i, shown));
+  const status = (i: Item, s: Status) =>
+    s === 'invalid'
+      ? !!i.c.problem
+      : rotationsFor(snapshot, i.c.id).some((r) => r.credential_id === i.c.id && !isFinished(r));
+  const filtering = filter.providers.length + filter.states.length;
+  const items = inTab.filter(
+    (i) =>
+      (!filter.providers.length || filter.providers.includes(i.provider)) &&
+      (!filter.states.length || filter.states.some((s) => status(i, s))),
+  );
+  const tabProviders = [...new Set(all.filter((i) => inView(i, shown)).map((i) => i.provider))];
+  const toggleFilter = <K extends keyof Filter>(key: K, value: Filter[K][number]) =>
+    setFilter((f) => ({
+      ...f,
+      [key]: (f[key] as string[]).includes(value)
+        ? (f[key] as string[]).filter((x) => x !== value)
+        : [...f[key], value],
+    }));
+  // A filter belongs to the tab it was set in.
+  useEffect(() => setFilter(NO_FILTER), [shown]);
   const inGroup = all.filter((i) => !activeGroup || i.c.groups.includes(activeGroup));
   const exportable = inGroup.filter((i) => !i.secretless && envFields(i.c).length > 0);
   const views: { id: View; label: string }[] = [
@@ -281,9 +311,28 @@ export function VaultPanel({
     ? scope.connections.length + (scope.keys?.length ?? 0) > 0
     : active.length > 0 || snapshot.plugins.some((p) => p.installed);
   const newKey = (
-    <button className="button" disabled={busy} onClick={() => setForm({})}>
+    <button className="button" disabled={busy} onClick={() => setAdding(true)}>
       <Plus size={14} /> New key
     </button>
+  );
+  const dialogs = (
+    <>
+      {adding && (
+        <NewKeyDialog
+          {...{ snapshot, busy, perform, browse }}
+          group={activeGroup || undefined}
+          connect={add}
+          close={() => setAdding(false)}
+        />
+      )}
+      {editing && (
+        <KeyForm
+          {...{ snapshot, busy, perform }}
+          credential={editing}
+          close={() => setEditing(undefined)}
+        />
+      )}
+    </>
   );
   if (!active.length && !all.length)
     return (
@@ -296,16 +345,16 @@ export function VaultPanel({
               <button className="button" onClick={browse}>
                 Add a provider <ArrowUpRight size={14} />
               </button>
-              <button className="button outline" disabled={busy} onClick={() => setForm({})}>
-                <Plus size={14} /> Add a key by hand
+              <button className="button outline" disabled={busy} onClick={() => setAdding(true)}>
+                <Plus size={14} /> New key
               </button>
             </div>
           }
         >
           Add a provider such as OpenAI, GitHub, or AWS. GetKeys brings in the keys already on this
-          device and in your accounts.
+          device and in your accounts, and makes new ones without visiting their sites.
         </Empty>
-        {form && <KeyForm {...{ snapshot, busy, perform }} close={() => setForm(undefined)} />}
+        {dialogs}
       </>
     );
   return (
@@ -369,24 +418,86 @@ export function VaultPanel({
             </button>
           )}
         </div>
-        {activeGroup && (
-          <div className="group-actions">
-            <button
-              className="button ghost small"
-              disabled={busy}
-              onClick={() => setPicking(activeGroup)}
-            >
-              <ListChecks size={14} strokeWidth={1.75} /> Choose keys
-            </button>
-            <button
-              className="button ghost small danger"
-              disabled={busy}
-              onClick={() => deleteGroup(activeGroup)}
-            >
-              <Trash2 size={14} strokeWidth={1.75} /> Delete group
-            </button>
-          </div>
-        )}
+        <div className="group-actions">
+          <Menu
+            label="Filter"
+            title={`Filter ${tabs.find((t) => t.id === shown)?.label ?? 'keys'}`}
+            className={`button ghost small ${filtering ? 'active' : ''}`}
+            align="end"
+            button={
+              <>
+                <ListFilter size={14} strokeWidth={1.75} /> Filter
+                {filtering > 0 && <span className="count">{filtering}</span>}
+              </>
+            }
+          >
+            {(close) => (
+              <>
+                <div className="menu-heading">Provider</div>
+                {tabProviders.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={filter.providers.includes(p)}
+                    className="menu-item"
+                    onClick={() => toggleFilter('providers', p)}
+                  >
+                    <Check size={13} strokeWidth={2.25} className="menu-check" />
+                    <ProviderMark small name={p} /> {p}
+                  </button>
+                ))}
+                <div className="menu-heading">Status</div>
+                {STATUSES.map((st) => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={filter.states.includes(st.id)}
+                    className="menu-item"
+                    onClick={() => toggleFilter('states', st.id)}
+                  >
+                    <Check size={13} strokeWidth={2.25} className="menu-check" /> {st.label}
+                  </button>
+                ))}
+                {filtering > 0 && (
+                  <>
+                    <div className="menu-separator" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="menu-item"
+                      onClick={() => {
+                        setFilter(NO_FILTER);
+                        close();
+                      }}
+                    >
+                      Clear filter
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </Menu>
+          {activeGroup && (
+            <>
+              <button
+                className="button ghost small"
+                disabled={busy}
+                onClick={() => setPicking(activeGroup)}
+              >
+                <ListChecks size={14} strokeWidth={1.75} /> Choose keys
+              </button>
+              <button
+                className="button ghost small danger"
+                disabled={busy}
+                onClick={() => deleteGroup(activeGroup)}
+              >
+                <Trash2 size={14} strokeWidth={1.75} /> Delete group
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {shown === 'empty' && (
         <p className="tab-note">
@@ -410,28 +521,32 @@ export function VaultPanel({
               open={open === i.c.id}
               toggle={() => setOpen(open === i.c.id ? '' : i.c.id)}
               expand={() => setOpen(i.c.id)}
-              edit={() => setForm({ credential: i.c })}
+              edit={() => setEditing(i.c)}
               refreshKeys={refreshKeys}
               groups={groups}
+              openGroup={(g) => setView(`group:${g}`)}
             />
           ))}
         </ul>
       ) : (
-        <Empty title={search ? 'No matching keys' : 'No keys yet'}>
-          {search
-            ? 'Try a different name, provider, or project.'
+        <Empty
+          title={search || filtering ? 'No matching keys' : 'No keys yet'}
+          action={
+            filtering > 0 && (
+              <button className="button outline" onClick={() => setFilter(NO_FILTER)}>
+                Clear filter
+              </button>
+            )
+          }
+        >
+          {search || filtering
+            ? 'Try a different search or filter.'
             : activeGroup
               ? `Nothing in ${activeGroup} yet. Choose keys to add them.`
               : 'Refresh to look for keys again, or add one with New key.'}
         </Empty>
       )}
-      {form && (
-        <KeyForm
-          {...{ snapshot, busy, perform }}
-          credential={form.credential}
-          close={() => setForm(undefined)}
-        />
-      )}
+      {dialogs}
       {picking && (
         <GroupDialog
           {...{ snapshot, busy, perform }}
@@ -641,6 +756,7 @@ function KeyItem({
   edit,
   refreshKeys,
   groups,
+  openGroup,
 }: {
   item: Item;
   control: Controller;
@@ -651,6 +767,7 @@ function KeyItem({
   edit: () => void;
   refreshKeys: (scope?: RefreshScope) => void;
   groups: string[];
+  openGroup: (group: string) => void;
 }) {
   const { c, connection, manifest, provider, place, secretless, local, custom } = item;
   const { busy, perform, snapshot } = control;
@@ -790,7 +907,16 @@ function KeyItem({
           </button>
         </div>
       </div>
-      {open && <KeyDetails {...control} item={item} secret={secret} copy={copy} groups={groups} />}
+      {open && (
+        <KeyDetails
+          {...control}
+          item={item}
+          secret={secret}
+          copy={copy}
+          groups={groups}
+          openGroup={openGroup}
+        />
+      )}
       {dialog && local ? (
         <LocalKeyDialog
           {...control}
@@ -821,17 +947,17 @@ function KeyDetails({
   secret,
   copy,
   groups,
+  openGroup,
   ...control
 }: Controller & {
   item: Item;
   secret?: Record<string, string>;
   copy: (f: KeyField) => void;
   groups: string[];
+  openGroup: (group: string) => void;
 }) {
   const { c: credential, connection, custom, own } = item;
   const { busy, perform, snapshot } = control;
-  const [binding, setBinding] = useState(false);
-  const bindings = snapshot.bindings.filter((b) => b.credential_id === credential.id);
   const rotations = rotationsFor(snapshot, credential.id);
   const active = rotations.find((r) => !isFinished(r));
   const last = rotations.find(isFinished);
@@ -926,125 +1052,101 @@ function KeyDetails({
             </>
           )}
         </dl>
-        <GroupEditor {...control} credential={credential} groups={groups} />
-        {!custom && !own && (
-          <div className="detail-section">
-            <div className="detail-section-heading">
-              <h3>
-                Used by <span className="quiet">{bindings.length || ''}</span>
-              </h3>
-              <button
-                className="icon-button"
-                title={credential.value_available ? 'Add an app' : 'Fill in the secret first'}
-                aria-label="Add consumer"
-                disabled={!credential.value_available}
-                onClick={() => setBinding(true)}
-              >
-                <Plus size={15} />
-              </button>
-            </div>
-            {bindings.length ? (
-              bindings.map((b) => (
-                <div className="binding-item" key={b.id}>
-                  <div>
-                    <strong className="mono">{b.variable}</strong>
-                    <small>
-                      {b.project} · {b.environment}
-                      {b.destination.kind === 'local' ? ' · local' : ''}
-                    </small>
-                  </div>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    aria-label={`Remove ${b.variable}`}
-                    onClick={() =>
-                      void perform(
-                        () => request({ kind: 'remove_binding', binding_id: b.id }),
-                        'Consumer removed',
-                      )
-                    }
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ))
-            ) : (
-              <p className="quiet">
-                Add the apps that read this key so a rotation can update them.
-              </p>
-            )}
-          </div>
-        )}
+        <GroupEditor {...control} credential={credential} groups={groups} open={openGroup} />
       </div>
-      {binding && (
-        <BindingForm {...control} credential={credential} close={() => setBinding(false)} />
-      )}
     </div>
   );
 }
 
-/** Files a key under groups, which scope Refresh and Export. */
+/** The groups a key is in; each opens its group, and + files the key under another. */
 function GroupEditor({
   credential,
   groups,
+  open,
   busy,
   perform,
-}: Controller & { credential: CredentialView; groups: string[] }) {
-  const [draft, setDraft] = useState('');
-  const listId = useId();
+}: Controller & { credential: CredentialView; groups: string[]; open: (group: string) => void }) {
+  const [naming, setNaming] = useState(false);
   const save = (next: string[]) =>
     void perform(() =>
       request<CredentialView>({ kind: 'set_groups', credential_id: credential.id, groups: next }),
     );
-  const add = () => {
-    const name = draft.trim();
-    if (!name) return;
-    setDraft('');
-    save([...credential.groups, name]);
-  };
+  const toggle = (g: string) =>
+    save(
+      credential.groups.includes(g)
+        ? credential.groups.filter((x) => x !== g)
+        : [...credential.groups, g],
+    );
   return (
     <div className="detail-section">
       <div className="detail-section-heading">
-        <h3>Groups</h3>
+        <h2>Groups</h2>
       </div>
-      <div className="group-editor">
+      <div className="group-links">
         {credential.groups.map((g) => (
-          <span className="chip" key={g}>
+          <button
+            type="button"
+            className="group-link"
+            key={g}
+            title={`Show ${g}`}
+            onClick={() => open(g)}
+          >
             {g}
-            <button
-              type="button"
-              aria-label={`Remove from ${g}`}
-              disabled={busy}
-              onClick={() => save(credential.groups.filter((x) => x !== g))}
-            >
-              <X size={11} strokeWidth={2.25} />
-            </button>
-          </span>
+          </button>
         ))}
-        <input
-          className="chip-input"
-          aria-label={`Add ${credential.name} to a group`}
-          placeholder={credential.groups.length ? 'Add…' : 'Add to a group'}
-          list={listId}
-          value={draft}
-          maxLength={40}
-          disabled={busy}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              add();
-            }
-          }}
-          onBlur={add}
-        />
-        <datalist id={listId}>
-          {groups
-            .filter((g) => !credential.groups.includes(g))
-            .map((g) => (
-              <option key={g} value={g} />
-            ))}
-        </datalist>
+        {!credential.groups.length && <span className="quiet">None</span>}
+        <Menu
+          label={`Groups for ${credential.name}`}
+          title="Add to a group"
+          className="icon-button small"
+          button={<Plus size={13} strokeWidth={2} />}
+        >
+          {(close) =>
+            naming ? (
+              <input
+                className="menu-input"
+                aria-label="New group name"
+                placeholder="Group name"
+                maxLength={40}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  const name = e.currentTarget.value.trim();
+                  setNaming(false);
+                  close();
+                  if (name && !credential.groups.includes(name)) save([...credential.groups, name]);
+                }}
+                onBlur={() => setNaming(false)}
+              />
+            ) : (
+              <>
+                {groups.map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    role="menuitemcheckbox"
+                    aria-checked={credential.groups.includes(g)}
+                    className="menu-item"
+                    disabled={busy}
+                    onClick={() => toggle(g)}
+                  >
+                    <Check size={13} strokeWidth={2.25} className="menu-check" /> {g}
+                  </button>
+                ))}
+                {groups.length > 0 && <div className="menu-separator" />}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="menu-item"
+                  onClick={() => setNaming(true)}
+                >
+                  <Plus size={13} strokeWidth={2} className="menu-check" /> New group
+                </button>
+              </>
+            )
+          }
+        </Menu>
       </div>
     </div>
   );
@@ -1052,21 +1154,14 @@ function GroupEditor({
 
 type DialogProps = Controller & { item: Item; close: () => void; done?: () => void };
 
-function RotateDialog({ item, close, done, snapshot, busy, perform }: DialogProps) {
+function RotateDialog({ item, close, done, busy, perform }: DialogProps) {
   const { c } = item;
-  const bindings = snapshot.bindings.filter((b) => b.credential_id === c.id).length;
   return (
     <Modal title={`Rotate ${c.name}`} onClose={close}>
       <p>
-        GetKeys creates a replacement, updates {plural(bindings, 'registered app')}, and waits for
-        your go-ahead before retiring this key.
+        GetKeys creates a replacement and keeps this key working until you’ve swapped the new one in
+        wherever you use it. Then it retires this one.
       </p>
-      {bindings === 0 && (
-        <p className="callout">
-          No apps are registered for this key. Update anything that uses it yourself before retiring
-          it.
-        </p>
-      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -1103,8 +1198,8 @@ function GuidedDialog({ item, close, done, snapshot, busy, perform }: DialogProp
   return (
     <Modal title={`Replace ${credential.name}`} onClose={close}>
       <p>
-        Create a replacement in {manifest.name} with the access your apps need, add it with New key,
-        then choose it here so GetKeys can update your apps.
+        Create a replacement in {manifest.name} with the access you need, add it with New key, then
+        choose it here. GetKeys retires this key once you’ve swapped the new one in.
       </p>
       <button
         className="button outline full"
@@ -1356,7 +1451,7 @@ function PasteRotateDialog({ item, close, busy, perform }: DialogProps) {
 }
 
 /** Revokes a key with its provider, or walks the person through deleting it there. */
-function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
+function DeleteDialog({ item, close, busy, perform }: DialogProps) {
   const { c } = item;
   const manifest = item.manifest;
   const [manual, setManual] = useState(false);
@@ -1364,7 +1459,6 @@ function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
     !!manifest &&
     !c.provider_id.startsWith('import-') &&
     manifest.operations.includes('revoke_credential');
-  const bindings = snapshot.bindings.filter((b) => b.credential_id === c.id).length;
   if (manual && manifest)
     return (
       <Modal title={`Delete ${c.name} in ${manifest.name}`} onClose={close}>
@@ -1408,11 +1502,6 @@ function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
             ? `GetKeys revokes it in ${manifest.name} and removes it from this device. Anything still using it stops working.`
             : `GetKeys removes it from this device and opens ${manifest.name} so you can delete it there too.`}
       </p>
-      {bindings > 0 && (
-        <p className="callout">
-          {plural(bindings, 'registered app')} use this key and will lose access.
-        </p>
-      )}
       <div className="modal-footer">
         <button type="button" className="button outline" onClick={close}>
           Cancel
@@ -1437,127 +1526,46 @@ function DeleteDialog({ item, close, snapshot, busy, perform }: DialogProps) {
   );
 }
 
-/** Adds a key by hand, or fills in the secret of a key the provider listed without it. */
+/** Fills in the secret of a key the provider listed without it, or replaces a custom key's values. */
 function KeyForm({
   snapshot,
   busy,
   perform,
   credential,
   close,
-}: Controller & { credential?: CredentialView; close: () => void }) {
-  // A choice is an account id, or `plugin:<id>` for a key kept on its own with that provider.
-  const manifestOf = (id: string) =>
-    snapshot.plugins.find(
-      (p) =>
-        p.manifest.id ===
-        (id.startsWith(PLUGIN)
-          ? id.slice(PLUGIN.length)
-          : snapshot.connections.find((c) => c.id === id)?.plugin_id),
-    )?.manifest;
-  const accounts = snapshot.connections.filter((c) => {
-    const m = manifestOf(c.id);
-    return c.state !== 'disconnected' && m && inputs(m.credential_fields).length > 0;
-  });
-  const providers = snapshot.plugins.filter(
-    (p) => p.installed && inputs(p.manifest.credential_fields).length > 0,
-  );
-  const [account, setAccount] = useState(
-    credential
-      ? credential.connection_id || CUSTOM
-      : (accounts[0]?.id ?? (providers[0] ? PLUGIN + providers[0].manifest.id : CUSTOM)),
-  );
-  const own = account.startsWith(PLUGIN);
-  const [resources, setResources] = useState<Resource[] | undefined>(credential && []);
-  const [resource, setResource] = useState(credential?.resource ?? '');
-  const manifest = manifestOf(account);
-  const accountToken = !!manifest?.account_credentials;
-  useEffect(() => {
-    if (own) setResources([]);
-    if (credential || !account || account === CUSTOM || own) return;
-    let current = true;
-    setResources(undefined);
-    void perform(() => request<Resource[]>({ kind: 'resources', connection_id: account })).then(
-      (r) => {
-        if (!current) return;
-        const all = [
-          ...(accountToken ? [{ id: '', name: 'Account token', kind: '' }] : []),
-          ...(r ?? []),
-        ];
-        setResources(all);
-        setResource(all[0]?.id ?? '');
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [account, accountToken, credential, own, perform]);
-  const prefill = (key: string) => credential?.fields.find((f) => f.key === key)?.value ?? '';
-  const providerSelect = !credential && (
-    <Field label="Provider">
-      <select value={account} onChange={(e) => setAccount(e.target.value)} required>
-        {accounts.map((c) => (
-          <option key={c.id} value={c.id}>
-            {manifestOf(c.id)?.name} · {c.name}
-          </option>
-        ))}
-        {providers.map((p) => (
-          <option key={p.manifest.id} value={PLUGIN + p.manifest.id}>
-            {p.manifest.name} · Key only
-          </option>
-        ))}
-        <option value={CUSTOM}>None · any other service</option>
-      </select>
-    </Field>
-  );
-  if (account === CUSTOM)
-    return (
-      <CustomKeyForm {...{ snapshot, busy, perform, credential, close }} header={providerSelect} />
-    );
+}: Controller & { credential: CredentialView; close: () => void }) {
+  const manifest = snapshot.plugins.find(
+    (p) =>
+      p.manifest.id ===
+      snapshot.connections.find((c) => c.id === credential.connection_id)?.plugin_id,
+  )?.manifest;
+  if (credential.credential_type === CUSTOM || !manifest)
+    return <CustomKeyForm {...{ snapshot, busy, perform, credential, close }} />;
+  const fields = inputs(manifest.credential_fields);
+  const prefill = (key: string) => credential.fields.find((f) => f.key === key)?.value ?? '';
   return (
-    <Modal title={credential ? `Fill in ${credential.name}` : 'New key'} onClose={close}>
-      <p>
-        {manifest
-          ? `GetKeys checks the key with ${manifest.name}, then keeps it encrypted on this device.`
-          : 'Add a provider first.'}
-      </p>
+    <Modal title={`Fill in ${credential.name}`} onClose={close}>
+      <p>GetKeys checks the key with {manifest.name}, then keeps it encrypted on this device.</p>
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (!manifest) return;
           const data = new FormData(e.currentTarget);
-          const fields = Object.fromEntries(
-            inputs(manifest.credential_fields)
-              .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
-              .filter(([, value]) => value !== ''),
-          );
-          if (own) {
-            void perform(
-              () =>
-                request<CredentialView>({
-                  kind: 'save_key',
-                  credential_id: null,
-                  plugin_id: manifest.id,
-                  name: String(data.get('name')),
-                  fields,
-                }),
-              'Key saved',
-            ).then((result) => {
-              if (result) close();
-            });
-            return;
-          }
           void perform(
             () =>
               request<CredentialView>({
                 kind: 'import',
                 input: {
-                  connection_id: account,
-                  provider_id: credential?.provider_id ?? null,
-                  resource,
+                  connection_id: credential.connection_id,
+                  provider_id: credential.provider_id,
+                  resource: credential.resource,
                   name: String(data.get('name')),
-                  project: credential?.project ?? '',
-                  environment: credential?.environment ?? '',
-                  fields,
+                  project: credential.project,
+                  environment: credential.environment,
+                  fields: Object.fromEntries(
+                    fields
+                      .map((f) => [f.key, String(data.get(f.key) ?? '').trim()])
+                      .filter(([, value]) => value !== ''),
+                  ),
                 },
               }),
             'Key saved',
@@ -1566,306 +1574,24 @@ function KeyForm({
           });
         }}
       >
-        {!credential && (
-          <>
-            {providerSelect}
-            {!!resources?.length && (
-              <Field label={accountToken ? 'Belongs to' : resourceLabel(resources[0].kind)}>
-                <select value={resource} onChange={(e) => setResource(e.target.value)} required>
-                  {resources.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-          </>
-        )}
         <Field label="Name">
-          <input
-            name="name"
-            defaultValue={credential?.name ?? ''}
-            placeholder="Production API key"
-            required
-            autoFocus
-          />
+          <input name="name" defaultValue={credential.name} required autoFocus />
         </Field>
-        {manifest &&
-          inputs(manifest.credential_fields).map((f) => (
-            <Field key={f.key} label={f.required ? f.label : `${f.label} (optional)`}>
-              <input
-                type={f.secret ? 'password' : 'text'}
-                name={f.key}
-                required={f.required}
-                defaultValue={f.secret ? undefined : prefill(f.key)}
-                placeholder={f.placeholder}
-                autoComplete="new-password"
-                spellCheck={false}
-              />
-            </Field>
-          ))}
-        <button className="button full" disabled={busy || !manifest || !resources}>
-          Save key
-        </button>
-      </form>
-    </Modal>
-  );
-}
-
-const PLUGIN = 'plugin:';
-
-type Row = { variable: string; value: string; secret: boolean };
-const variableName = (s: string) => s.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-
-/** A key from any service, saved as named values. Editing keeps secrets left blank. */
-function CustomKeyForm({
-  credential,
-  header,
-  close,
-  busy,
-  perform,
-}: Controller & { credential?: CredentialView; header: ReactNode; close: () => void }) {
-  const [rows, setRows] = useState<Row[]>(
-    credential?.fields.map((f) => ({
-      variable: f.key,
-      value: f.secret ? '' : (f.value ?? ''),
-      secret: f.secret,
-    })) ?? [{ variable: '', value: '', secret: true }],
-  );
-  const kept = (r: Row) =>
-    r.secret && !!credential?.fields.some((f) => f.secret && f.key === r.variable);
-  const update = (i: number, patch: Partial<Row>) =>
-    setRows((all) => all.map((r, j) => (i === j ? { ...r, ...patch } : r)));
-  /** Pasting `NAME=value` lines fills in a row for each. */
-  const paste = (i: number, text: string) => {
-    const parsed = text
-      .split(/\r?\n/)
-      .map((l) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(l))
-      .flatMap((m) =>
-        m
-          ? [
-              {
-                variable: m[1].toUpperCase(),
-                value: m[2].replace(/^(['"])(.*)\1$/, '$2'),
-                secret: true,
-              },
-            ]
-          : [],
-      );
-    if (!parsed.length) return false;
-    setRows((all) => [...all.slice(0, i), ...parsed, ...all.slice(i + 1)]);
-    return true;
-  };
-  return (
-    <Modal title={credential ? `Replace ${credential.name}` : 'New key'} onClose={close}>
-      <p>
-        {credential
-          ? 'Paste the new values. Secret values you leave blank stay as they are.'
-          : 'Any key from any service. Each value is exported under its variable name. Paste NAME=value lines to fill in several at once.'}
-      </p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const name = String(new FormData(e.currentTarget).get('name'));
-          void perform(
-            () =>
-              request<CredentialView>({
-                kind: 'save_custom',
-                credential_id: credential?.id ?? null,
-                name,
-                fields: rows,
-              }),
-            'Key saved',
-          ).then((result) => {
-            if (result) close();
-          });
-        }}
-      >
-        {header}
-        <Field label="Name">
-          <input
-            name="name"
-            defaultValue={credential?.name ?? ''}
-            placeholder="OpenAI"
-            required
-            autoFocus
-          />
-        </Field>
-        <div className="field">
-          <span>Values</span>
-          <div className="value-rows">
-            {rows.map((r, i) => (
-              <div className="value-row" key={i}>
-                <input
-                  aria-label={`Variable ${i + 1}`}
-                  className="mono"
-                  placeholder="API_KEY"
-                  value={r.variable}
-                  required
-                  spellCheck={false}
-                  onChange={(e) => update(i, { variable: variableName(e.target.value) })}
-                  onPaste={(e) => {
-                    if (paste(i, e.clipboardData.getData('text'))) e.preventDefault();
-                  }}
-                />
-                <input
-                  aria-label={`Value of ${r.variable || `variable ${i + 1}`}`}
-                  type={r.secret ? 'password' : 'text'}
-                  placeholder={kept(r) ? 'Unchanged' : 'Value'}
-                  value={r.value}
-                  required={!kept(r)}
-                  autoComplete="new-password"
-                  spellCheck={false}
-                  onChange={(e) => update(i, { value: e.target.value })}
-                  onPaste={(e) => {
-                    if (paste(i, e.clipboardData.getData('text'))) e.preventDefault();
-                  }}
-                />
-                <button
-                  type="button"
-                  className="icon-button outline"
-                  aria-pressed={r.secret}
-                  aria-label={`${r.variable || 'Value'} is secret`}
-                  title={r.secret ? 'Secret: hidden until revealed' : 'Not secret: always shown'}
-                  onClick={() => update(i, { secret: !r.secret })}
-                >
-                  {r.secret ? <Lock size={14} /> : <LockOpen size={14} />}
-                </button>
-                <button
-                  type="button"
-                  className="icon-button"
-                  aria-label={`Remove ${r.variable || `variable ${i + 1}`}`}
-                  disabled={rows.length === 1}
-                  onClick={() => setRows((all) => all.filter((_, j) => j !== i))}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="button ghost small add-row"
-            onClick={() => setRows((all) => [...all, { variable: '', value: '', secret: true }])}
-          >
-            <Plus size={13} /> Add value
-          </button>
-        </div>
+        {fields.map((f) => (
+          <Field key={f.key} label={f.required ? f.label : `${f.label} (optional)`}>
+            <input
+              type={f.secret ? 'password' : 'text'}
+              name={f.key}
+              required={f.required}
+              defaultValue={f.secret ? undefined : prefill(f.key)}
+              placeholder={f.placeholder}
+              autoComplete="new-password"
+              spellCheck={false}
+            />
+          </Field>
+        ))}
         <button className="button full" disabled={busy}>
           Save key
-        </button>
-      </form>
-    </Modal>
-  );
-}
-
-function BindingForm({
-  credential,
-  close,
-  snapshot,
-  busy,
-  perform,
-}: Controller & { credential: CredentialView; close: () => void }) {
-  const fields = credential.fields.filter((f) => f.available);
-  const [field, setField] = useState(fields[0]?.key ?? '');
-  const [variable, setVariable] = useState(fields[0]?.env ?? '');
-  const [destination, setDestination] = useState('local');
-  const destinations = snapshot.connections.filter(
-    (c) =>
-      c.state === 'connected' &&
-      snapshot.plugins
-        .find((p) => p.manifest.id === c.plugin_id)
-        ?.manifest.operations.includes('write_secret'),
-  );
-  return (
-    <Modal title="Add a consumer" onClose={close}>
-      <p>Map a credential field to the environment variable your app expects.</p>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const d = new FormData(e.currentTarget);
-          const value: Binding = {
-            id: '',
-            credential_id: credential.id,
-            field: String(d.get('field')),
-            variable: String(d.get('variable')),
-            project: String(d.get('project')),
-            environment: String(d.get('environment')),
-            destination:
-              destination === 'local'
-                ? { kind: 'local' }
-                : {
-                    kind: 'provider',
-                    connection_id: destination,
-                    resource: String(d.get('resource')),
-                  },
-          };
-          void perform(
-            () => request<Binding>({ kind: 'save_binding', binding: value }),
-            'Consumer added',
-          ).then((b) => {
-            if (b) close();
-          });
-        }}
-      >
-        <Field label="Credential field">
-          <select
-            name="field"
-            value={field}
-            onChange={(e) => {
-              const next = fields.find((f) => f.key === e.target.value);
-              setField(e.target.value);
-              if (next?.env) setVariable(next.env);
-            }}
-          >
-            {fields.map((f) => (
-              <option key={f.key} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Environment variable">
-          <input
-            name="variable"
-            value={variable}
-            onChange={(e) => setVariable(e.target.value)}
-            placeholder="API_TOKEN"
-            pattern="[A-Za-z_][A-Za-z0-9_]*"
-            required
-          />
-        </Field>
-        <div className="form-row">
-          <Field label="Project name">
-            <input name="project" placeholder="my-app" defaultValue={credential.project} required />
-          </Field>
-          <Field label="Environment">
-            <input name="environment" defaultValue={credential.environment} required />
-          </Field>
-        </div>
-        <Field label="Destination">
-          <select value={destination} onChange={(e) => setDestination(e.target.value)}>
-            <option value="local">Local process · getkeys run</option>
-            {destinations.map((c) => (
-              <option value={c.id} key={c.id}>
-                {c.name} ·{' '}
-                {snapshot.plugins.find((p) => p.manifest.id === c.plugin_id)?.manifest.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {destination !== 'local' && (
-          <Field label="Destination resource ID">
-            <input name="resource" placeholder="Project ID or owner/repository" required />
-          </Field>
-        )}
-        <p className="small-text quiet">
-          Saving a consumer records the mapping. Remote values are delivered during rotation. GitHub
-          destinations use repository Actions secrets; Vercel needs a deployment after delivery.
-        </p>
-        <button className="button full" disabled={busy}>
-          <Check size={15} /> Save consumer
         </button>
       </form>
     </Modal>

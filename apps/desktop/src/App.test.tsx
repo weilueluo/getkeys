@@ -2,14 +2,15 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { copyCredential, exportEnv, request } from './bridge';
+import { waiting } from './NewKey';
 import { connectedSnapshot, emptySnapshot } from '../../../tests/fixtures';
 import type {
   AuthProgress,
-  Binding,
   Command,
   CredentialView,
   Deletion,
   Discovery,
+  Resource,
   Snapshot,
 } from './types';
 
@@ -22,6 +23,17 @@ let snapshot: Snapshot;
 let found: Discovery[];
 let listed: (command: { connection_id: string; resource: string }) => Promise<void> | void;
 let deletion: Deletion;
+let resources: Resource[];
+const NEW_REF = 'newprojectrefabcdefg';
+const resource = (r: Partial<Resource>): Resource => ({
+  id: '',
+  name: '',
+  kind: 'project',
+  url: '',
+  pending: false,
+  note: '',
+  ...r,
+});
 const connected = (pluginId: string, name: string, source: string): AuthProgress => {
   const connection = {
     id: `connection-${name}`,
@@ -86,6 +98,8 @@ beforeEach(() => {
   found = [];
   listed = () => {};
   deletion = { kind: 'deleted' };
+  resources = [resource({ id: 'abcdefghijklmnopqrst', name: 'GetKeys' })];
+  waiting.every = 1;
   vi.clearAllMocks();
   HTMLDialogElement.prototype.showModal = function () {
     this.setAttribute('open', '');
@@ -127,11 +141,87 @@ beforeEach(() => {
         user_code: 'ABCD-1234',
         interval: 5,
       };
-    if (command.kind === 'resources')
-      return [{ id: 'abcdefghijklmnopqrst', name: 'GetKeys', kind: 'project' }];
+    if (command.kind === 'resources') return resources;
+    if (command.kind === 'create') {
+      const made = key({
+        id: 'created',
+        connection_id: command.connection_id,
+        resource: command.resource,
+        name: command.name,
+        value_available: true,
+      });
+      snapshot.credentials.push(made);
+      return made;
+    }
+    if (command.kind === 'owners') {
+      const plugin = snapshot.connections.find((c) => c.id === command.connection_id)?.plugin_id;
+      return plugin === 'official.github'
+        ? [
+            { id: '', name: 'octocat' },
+            { id: 'acme', name: 'acme' },
+          ]
+        : plugin === 'official.supabase'
+          ? [{ id: 'personal-org', name: 'Personal' }]
+          : [{ id: '', name: 'luo' }];
+    }
+    if (command.kind === 'create_resource') {
+      const plugin = snapshot.connections.find((c) => c.id === command.connection_id)!.plugin_id;
+      if (plugin === 'official.github')
+        return {
+          resource: resource({
+            id: `octocat/${command.name}`,
+            name: `octocat/${command.name}`,
+            kind: 'repository',
+            url: `https://github.com/octocat/${command.name}`,
+          }),
+          generated: null,
+        };
+      if (plugin === 'official.supabase') {
+        const password = key({
+          id: 'db-password',
+          connection_id: '',
+          provider_id: 'custom',
+          name: `${command.name} database password`,
+          credential_type: 'custom',
+          value_available: true,
+          fields: [
+            {
+              key: 'SUPABASE_DB_PASSWORD',
+              label: 'SUPABASE_DB_PASSWORD',
+              env: 'SUPABASE_DB_PASSWORD',
+              secret: true,
+              value: null,
+              available: true,
+            },
+          ],
+        });
+        snapshot.credentials.push(password);
+        resources.push(resource({ id: NEW_REF, name: command.name }));
+        return {
+          resource: resource({
+            id: NEW_REF,
+            name: command.name,
+            pending: true,
+            url: `https://supabase.com/dashboard/project/${NEW_REF}`,
+          }),
+          generated: password,
+        };
+      }
+      return { resource: resource({ id: 'prj_1', name: command.name }), generated: null };
+    }
     if (command.kind === 'reveal') return { fields: { token: 'test-secret-never-in-inventory' } };
     if (command.kind === 'import') return snapshot.credentials[0];
-    if (command.kind === 'verify_binding') return snapshot.rotations[0];
+    if (command.kind === 'save_key') {
+      const saved = key({
+        id: 'own-1',
+        plugin_id: command.plugin_id,
+        connection_id: '',
+        name: command.name,
+        value_available: true,
+      });
+      snapshot.credentials.push(saved);
+      return saved;
+    }
     if (command.kind === 'delete') {
       if (deletion.kind === 'deleted')
         snapshot.credentials = snapshot.credentials.filter((c) => c.id !== command.credential_id);
@@ -436,25 +526,59 @@ describe('GetKeys workflows', () => {
     expect(commands()).toContainEqual({ kind: 'dedicate', connection_id: 'vercel' });
     expect(await within(panel).findByRole('button', { name: /Rotate key/ })).toBeInTheDocument();
   });
-  it('adds a key by hand for a chosen provider', async () => {
+  it('reveals New key one step at a time, starting with the provider', async () => {
     snapshot = connectedSnapshot();
     render(<App />);
-    const add = await screen.findByRole('button', { name: 'New key' });
-    await waitFor(() => expect(add).toBeEnabled());
-    fireEvent.click(add);
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByLabelText('Provider')).toHaveDisplayValue(
-      'Supabase · Personal projects',
-    );
-    expect(await within(dialog).findByLabelText('Project')).toHaveDisplayValue('GetKeys');
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    const providers = within(dialog).getByRole('group', { name: 'Provider' });
+    expect(within(providers).getByRole('button', { name: /^Supabase/ })).toBeInTheDocument();
+    expect(
+      within(providers).getByRole('button', { name: /Any other service/ }),
+    ).toBeInTheDocument();
+    // Providers that aren't added aren't offered.
+    expect(within(providers).queryByRole('button', { name: /^GitHub/ })).toBeNull();
+    expect(within(dialog).queryByRole('group', { name: 'Account' })).toBeNull();
+    expect(within(dialog).queryByLabelText('Name')).toBeNull();
+
+    fireEvent.click(within(providers).getByRole('button', { name: /^Supabase/ }));
+    const account = within(dialog).getByRole('group', { name: 'Account' });
+    expect(within(dialog).queryByRole('group', { name: 'Project' })).toBeNull();
+    fireEvent.click(within(account).getByRole('button', { name: /^Personal projects/ }));
+    const project = await within(dialog).findByRole('group', { name: 'Project' });
+    expect(within(project).getByRole('button', { name: /New project/ })).toBeInTheDocument();
+    fireEvent.click(within(project).getByRole('button', { name: /^GetKeys/ }));
+    const way = within(dialog).getByRole('group', { name: 'Key' });
+    expect(within(dialog).queryByLabelText('Name')).toBeNull();
+    fireEvent.click(within(way).getByRole('button', { name: /Create a new key/ }));
+    expect(within(dialog).queryByLabelText('API key')).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Staging' } });
+    await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
+    expect(await screen.findByText('Created Staging')).toBeInTheDocument();
+    expect(commands()).toContainEqual({
+      kind: 'create',
+      connection_id: 'connection',
+      resource: 'abcdefghijklmnopqrst',
+      name: 'Staging',
+    });
+    expect(commands().some((c) => c.kind === 'import')).toBe(false);
+  });
+  it('goes back a step with Change, and pastes a key the provider checks', async () => {
+    snapshot = connectedSnapshot();
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /^GetKeys/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change key' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Paste a key/ }));
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Staging' } });
     fireEvent.change(within(dialog).getByLabelText('API key'), {
       target: { value: 'fixture-new-key' },
     });
-    await waitFor(() =>
-      expect(within(dialog).getByRole('button', { name: 'Save key' })).toBeEnabled(),
-    );
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save key' }));
+    await enabled(within(dialog).getByRole('button', { name: 'Save key' }));
     await waitFor(() => expect(commands().some((c) => c.kind === 'import')).toBe(true));
     expect(commands().find((c) => c.kind === 'import')).toMatchObject({
       input: {
@@ -465,6 +589,104 @@ describe('GetKeys workflows', () => {
         fields: { token: 'fixture-new-key' },
       },
     });
+  });
+  it('keeps a pasted key on its own when no account is chosen', async () => {
+    snapshot = connectedSnapshot();
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^No account/ }));
+    // A key without an account can only be pasted, so that step is skipped.
+    expect(within(dialog).queryByRole('group', { name: 'Project' })).toBeNull();
+    expect(within(dialog).queryByRole('group', { name: 'Key' })).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Mine' } });
+    fireEvent.change(within(dialog).getByLabelText('API key'), { target: { value: 'sb_secret' } });
+    await enabled(within(dialog).getByRole('button', { name: 'Save key' }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({
+        kind: 'save_key',
+        credential_id: null,
+        plugin_id: 'official.supabase',
+        name: 'Mine',
+        fields: { token: 'sb_secret' },
+      }),
+    );
+  });
+  it('makes a key for a new project, waiting for the project to start', async () => {
+    snapshot = connectedSnapshot();
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /New project/ }));
+    const form = within(dialog).getByRole('form', { name: 'New project' });
+    fireEvent.change(within(form).getByLabelText('Project name'), {
+      target: { value: 'My App!' },
+    });
+    expect(within(form).getByLabelText('Project name')).toHaveValue('my-app-');
+    fireEvent.change(within(form).getByLabelText('Region'), { target: { value: 'emea' } });
+    await enabled(within(form).getByRole('button', { name: 'Create project' }));
+    expect(
+      await screen.findByText('Created my-app. Its my-app database password is saved as a key.'),
+    ).toBeInTheDocument();
+    expect(commands()).toContainEqual({
+      kind: 'create_resource',
+      connection_id: 'connection',
+      owner: 'personal-org',
+      name: 'my-app',
+      options: { region: 'emea' },
+    });
+    // The new project is chosen, and the cascade moves on to the key.
+    expect(within(dialog).getByText('my-app')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'App server' } });
+    await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({
+        kind: 'create',
+        connection_id: 'connection',
+        resource: NEW_REF,
+        name: 'App server',
+      }),
+    );
+  });
+  it('offers to connect an account when the provider has none', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.plugins[0].installed = true;
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^GitHub/ }));
+    const account = within(dialog).getByRole('group', { name: 'Account' });
+    await enabled(within(account).getByRole('button', { name: /Connect a GitHub account/ }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({ kind: 'scan_sources', plugin_id: 'official.github' }),
+    );
+  });
+  it('puts a new key in the group being viewed', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.credentials[0].groups = ['backend'];
+    render(<App />);
+    fireEvent.click(await screen.findByRole('tab', { name: /^backend/ }));
+    await enabled(screen.getByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    expect(dialog).toHaveTextContent('It joins backend.');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Personal projects/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /^GetKeys/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create a new key/ }));
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Worker' } });
+    await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({
+        kind: 'set_groups',
+        credential_id: 'created',
+        groups: ['backend'],
+      }),
+    );
+    expect(await item('Worker')).toBeInTheDocument();
   });
   it('swaps the management key by opening the provider and pasting a new one', async () => {
     snapshot = connectedSnapshot();
@@ -490,16 +712,6 @@ describe('GetKeys workflows', () => {
   });
   it('shows an active rotation inline on its key', async () => {
     snapshot = connectedSnapshot();
-    const binding: Binding = {
-      id: 'binding',
-      credential_id: 'credential',
-      field: 'token',
-      variable: 'API_TOKEN',
-      project: 'getkeys',
-      environment: 'production',
-      destination: { kind: 'local' },
-    };
-    snapshot.bindings = [binding];
     snapshot.rotations = [
       {
         id: 'rotation',
@@ -508,37 +720,30 @@ describe('GetKeys workflows', () => {
         resource: 'abcdefghijklmnopqrst',
         plugin_version: '0.1.0',
         name: 'Production API replacement',
-        state: { kind: 'awaiting_verification' },
+        state: { kind: 'ready_to_retire' },
         candidate_id: null,
-        bindings: [binding],
-        updated_bindings: ['binding'],
-        verified_bindings: [],
         created_at: 1791493200,
       },
     ];
     render(<App />);
     expect(await item('Production API')).toHaveTextContent('Rotating');
     const details = await expand('Production API');
-    expect(within(details).getByRole('list', { name: 'Rotation progress' })).toBeInTheDocument();
-    expect(within(details).getByText('Updated · verify deployment')).toBeInTheDocument();
+    const steps = within(details).getByRole('list', { name: 'Rotation progress' });
+    expect(within(steps).getByText('Swap it in').closest('li')).toHaveAttribute(
+      'aria-current',
+      'step',
+    );
+    expect(details).toHaveTextContent('Put it wherever you use this key');
     expect(screen.getByRole('button', { name: 'Delete Production API' })).toBeDisabled();
-    await waitFor(() =>
-      expect(within(details).getByRole('button', { name: 'Verify' })).toBeEnabled(),
-    );
-    fireEvent.click(within(details).getByRole('button', { name: 'Verify' }));
-    fireEvent.click(screen.getByRole('button', { name: /The app works with the new key/ }));
-    await waitFor(() =>
-      expect(
-        commands().some((c) => c.kind === 'verify_binding' && c.binding_id === 'binding'),
-      ).toBe(true),
-    );
+    await enabled(within(details).getByRole('button', { name: /Retire old key/ }));
+    expect(screen.getByRole('dialog', { name: 'Retire the old key?' })).toBeInTheDocument();
   });
   it('adds a key from any service without a provider', async () => {
     snapshot = connectedSnapshot();
     render(<App />);
     await enabled(await screen.findByRole('button', { name: 'New key' }));
     let dialog = screen.getByRole('dialog', { name: 'New key' });
-    fireEvent.change(within(dialog).getByLabelText('Provider'), { target: { value: 'custom' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Any other service/ }));
     dialog = screen.getByRole('dialog', { name: 'New key' });
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'OpenAI' } });
     fireEvent.paste(within(dialog).getByLabelText('Variable 1'), {
@@ -597,11 +802,20 @@ describe('GetKeys workflows', () => {
     );
     expect(commands()).not.toContainEqual({ kind: 'scan_sources', plugin_id: null });
   });
-  it('files a key under a group from its details', async () => {
+  it('files a key under a group from its details, and its groups open', async () => {
     snapshot = connectedSnapshot();
+    snapshot.credentials[1].groups = ['backend'];
     render(<App />);
-    const details = await expand('Production API');
-    const input = within(details).getByLabelText('Add Production API to a group');
+    let details = await expand('Production API');
+    expect(within(details).queryByRole('textbox')).toBeNull();
+    fireEvent.click(within(details).getByRole('button', { name: 'Groups for Production API' }));
+    const menu = within(details).getByRole('menu');
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'backend' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'New group' }));
+    const input = within(details).getByLabelText('New group name');
     fireEvent.change(input, { target: { value: 'staging' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() =>
@@ -612,6 +826,32 @@ describe('GetKeys workflows', () => {
       }),
     );
     expect(await screen.findByRole('tab', { name: /^staging/ })).toBeInTheDocument();
+    details = screen.getByRole('region', { name: 'Production API details' });
+    fireEvent.click(await within(details).findByRole('button', { name: 'staging' }));
+    expect(screen.getByRole('tab', { name: /^staging/ })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Groups for Production API' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'backend' }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({
+        kind: 'set_groups',
+        credential_id: 'credential',
+        groups: ['staging', 'backend'],
+      }),
+    );
+  });
+  it('filters the keys in the tab being viewed, apart from search', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.credentials[0].problem = 'Rejected by the provider.';
+    render(<App />);
+    expect(await screen.findByPlaceholderText('Search keys')).toBeInTheDocument();
+    await item('Supabase CLI');
+    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Invalid' }));
+    expect(screen.queryByRole('button', { name: 'Details for Supabase CLI' })).toBeNull();
+    expect(await item('Production API')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Filter' })).toHaveTextContent('1');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Clear filter' }));
+    expect(await item('Supabase CLI')).toBeInTheDocument();
   });
   it('makes a group from the tabs and picks its keys', async () => {
     snapshot = connectedSnapshot();
@@ -684,8 +924,12 @@ describe('GetKeys workflows', () => {
       }),
     );
   });
-  it('opens the provider page where keys are made', async () => {
+  it('opens the provider page where keys are made, once the provider is added', async () => {
+    snapshot.plugins[0].installed = true;
     render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Providers' }));
+    await card('AWS');
+    expect(screen.queryByRole('button', { name: 'Open AWS' })).toBeNull();
     await enabled(await screen.findByRole('button', { name: 'Open GitHub' }));
     await waitFor(() =>
       expect(commands()).toContainEqual({ kind: 'open_token_page', plugin_id: 'official.github' }),
@@ -718,6 +962,7 @@ describe('GetKeys workflows', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
     expect(await screen.findByText(/GetKeys\\vault\.db/)).toBeInTheDocument();
     expect(screen.queryByText(/Plugins?/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Project folders/)).not.toBeInTheDocument();
     await enabled(screen.getByRole('button', { name: /Open folder/ }));
     await waitFor(() => expect(commands()).toContainEqual({ kind: 'open_vault_folder' }));
   });

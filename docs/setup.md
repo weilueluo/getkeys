@@ -25,7 +25,7 @@ Keep client secrets on the broker. A desktop binary cannot protect an embedded O
 
 ## GitHub
 
-Create a GitHub OAuth App, enable its device flow, and set `GETKEYS_GITHUB_CLIENT_ID` to its public client ID. No client secret is needed by the device flow. GetKeys requests `repo read:user` for repository inventory and Actions secret updates. Use an app registration appropriate to the accounts you intend to support.
+Create a GitHub OAuth App, enable its device flow, and set `GETKEYS_GITHUB_CLIENT_ID` to its public client ID. No client secret is needed by the device flow. GetKeys requests `repo read:user` for repository inventory. Use an app registration appropriate to the accounts you intend to support.
 
 Add GitHub, enter the displayed device code, and authorize in your browser. Personal access tokens are created in GitHub and imported into GetKeys; GitHub does not provide a general PAT-value retrieval API. [Device-flow documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow).
 
@@ -59,9 +59,9 @@ Register these exact redirect URLs, replacing the origin:
 - Supabase: `https://broker.example.com/callback/supabase`
 - Vercel: `https://broker.example.com/callback/vercel`
 
-For Supabase, create an OAuth App in organization settings and configure the Management API permissions for organizations, projects, and API keys. This is separate from Supabase Auth sign-in for an application's users. The broker uses PKCE and client authentication during code exchange and refresh. [Supabase integration guide](https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration).
+For Supabase, create an OAuth App in organization settings and configure the Management API permissions for organizations, projects (including write, to make a new project for a key), and API keys. This is separate from Supabase Auth sign-in for an application's users. The broker uses PKCE and client authentication during code exchange and refresh. [Supabase integration guide](https://supabase.com/docs/guides/integrations/build-a-supabase-oauth-integration).
 
-For Vercel, create a connectable-account integration. Enable read access to user/project information and write access to project environment variables; global-project-env-vars is needed to manage variables outside the integration's ownership. The browser starts at `/integrations/<slug>/new`. Vercel integration OAuth does not grant the documented personal-token-management endpoints, so this provider guides token creation and replacement through Vercel's dashboard. [Integration creation](https://vercel.com/docs/integrations/create-integration), [REST permissions](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations).
+For Vercel, create a connectable-account integration. Enable read access to user/project information and write access to projects and project environment variables; global-project-env-vars is needed to manage variables outside the integration's ownership. The browser starts at `/integrations/<slug>/new`. Vercel integration OAuth does not grant the documented personal-token-management endpoints, so this provider guides token creation and replacement through Vercel's dashboard. [Integration creation](https://vercel.com/docs/integrations/create-integration), [REST permissions](https://vercel.com/docs/integrations/create-integration/vercel-api-integrations).
 
 The callback consumes its state once. The desktop's separate random claim secret binds the result to the initiating device. Claims can be retried during the ten-minute window to survive a lost response; tokens are removed when the session expires. Tokens are saved in the encrypted local vault before the app marks the connection complete.
 

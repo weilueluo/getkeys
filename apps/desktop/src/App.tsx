@@ -383,7 +383,7 @@ export function App() {
                   <Marketplace
                     {...control}
                     search={search}
-                    searchField={searchField('Filter providers')}
+                    searchField={searchField('Search providers')}
                     connect={connect}
                     add={(p) => void add(p)}
                     found={found}
@@ -397,9 +397,10 @@ export function App() {
                   <VaultPanel
                     {...control}
                     search={search}
-                    searchField={searchField('Filter keys')}
+                    searchField={searchField('Search keys')}
                     browse={() => changePage('plugins')}
                     refreshKeys={(scope) => void refreshKeys(scope)}
+                    add={(p) => void add(p)}
                     focus={focusKey}
                   />
                 )}
