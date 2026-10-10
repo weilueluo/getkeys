@@ -45,7 +45,7 @@ fn listen(socket: &str, handler: Handler) -> Result<()> {
     #[cfg(unix)]
     let _ = std::fs::remove_file(socket);
     let options = ListenerOptions::new().name(endpoint::name(socket)?);
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     let options = {
         use interprocess::os::unix::local_socket::ListenerOptionsExt;
         options.mode(0o600)
@@ -53,6 +53,12 @@ fn listen(socket: &str, handler: Handler) -> Result<()> {
     let listener = options
         .create_sync()
         .with_context(|| format!("Unable to serve {socket}"))?;
+    // macOS can't set a socket's mode before binding it, so narrow it right after.
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    }
     std::thread::spawn(move || {
         for stream in listener.incoming().filter_map(Result::ok) {
             let handler = handler.clone();
