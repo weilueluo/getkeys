@@ -6,8 +6,7 @@
 
 **All your API keys, in one place. On your device.**
 
-GetKeys finds the provider sign-ins already on your machine, connects them in one click,<br/>
-and lets you create, rotate, copy, and revoke keys without visiting a single dashboard.
+GetKeys lets you create, rotate, copy, and revoke keys without visiting a single dashboard.
 
 [![CI](https://github.com/weilueluo/getkeys/actions/workflows/ci.yml/badge.svg)](https://github.com/weilueluo/getkeys/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/weilueluo/getkeys)](https://github.com/weilueluo/getkeys/releases/latest)
