@@ -10,6 +10,8 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:1420',
     viewport: { width: 1280, height: 880 },
     trace: 'retain-on-failure',
+    // Settled styles for accessibility checks: a modal fading in fails colour contrast.
+    reducedMotion: 'reduce',
   },
   webServer: {
     command: 'npm run dev',
