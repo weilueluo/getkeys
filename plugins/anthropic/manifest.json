@@ -2,7 +2,7 @@
   "id": "official.anthropic",
   "name": "Anthropic",
   "publisher": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connect with an Admin API key to see, disable and archive your organization's Claude API keys.",
   "homepage": "https://www.anthropic.com",
   "category": "ai",
@@ -14,7 +14,8 @@
     "validate_credential",
     "deactivate_credential",
     "revoke_credential",
-    "guide"
+    "guide",
+    "create_resource"
   ],
   "fields": [],
   "credential_fields": [
@@ -47,5 +48,9 @@
   "sources": [
     { "kind": "env", "var": "ANTHROPIC_ADMIN_KEY" },
     { "kind": "env", "var": "ANTHROPIC_API_KEY", "role": "key" }
-  ]
+  ],
+  "new_resource": {
+    "noun": "workspace",
+    "page": "https://console.anthropic.com/settings/workspaces"
+  }
 }

@@ -91,6 +91,15 @@ pub enum Command {
     Owners {
         connection_id: String,
     },
+    /// The account's choices for a `listed` option of the provider's `new_resource`.
+    Choices {
+        connection_id: String,
+        option: String,
+    },
+    /// Opens the provider's page for making a new project by hand, and returns its address.
+    OpenResourcePage {
+        plugin_id: String,
+    },
     /// Makes a project to create keys in. `options` are the provider's `new_resource` choices.
     CreateResource {
         connection_id: String,
@@ -209,6 +218,8 @@ impl Command {
                 | Command::Guide { .. }
                 | Command::Resources { .. }
                 | Command::Owners { .. }
+                | Command::Choices { .. }
+                | Command::OpenResourcePage { .. }
         )
     }
 }
@@ -360,6 +371,15 @@ impl App {
                 name,
             } => to_value(self.create(&connection_id, &resource, &name)?)?,
             Command::Owners { connection_id } => to_value(self.owners(&connection_id)?)?,
+            Command::Choices {
+                connection_id,
+                option,
+            } => to_value(self.choices(&connection_id, &option)?)?,
+            Command::OpenResourcePage { plugin_id } => {
+                let url = self.resource_page(&plugin_id)?;
+                open::that_detached(&url).context("Unable to open the system browser")?;
+                to_value(url)?
+            }
             Command::CreateResource {
                 connection_id,
                 owner,

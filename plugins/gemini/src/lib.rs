@@ -4,8 +4,12 @@ use std::collections::BTreeMap;
 pub const MANIFEST: &str = include_str!("../manifest.json");
 const KEYS: &str = "https://apikeys.googleapis.com/v2";
 const GEMINI: &str = "generativelanguage.googleapis.com";
+const PROJECTS: &str = "https://cloudresourcemanager.googleapis.com/v1";
+const SERVICES: &str = "https://serviceusage.googleapis.com/v1";
 /// Operation polls before giving up on a key that is still being created.
 const MAX_POLLS: u64 = 10;
+/// Polls, two seconds apart, before giving up on a project that is still being set up.
+const PROJECT_POLLS: u64 = 30;
 
 pub fn handle(call: Call) -> Step {
     execute(call).unwrap_or_else(|_| {
@@ -88,7 +92,149 @@ fn with_value(mut c: RemoteCredential, v: &Value) -> Step {
     }
 }
 
+/// A Google Cloud project ID from a name: 6 to 30 lowercase letters, digits and hyphens,
+/// starting with a letter.
+fn project_id(name: &str) -> Option<String> {
+    let id = name
+        .to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let id = id.get(..30).unwrap_or(&id).trim_end_matches('-');
+    (id.len() >= 6 && id.starts_with(|c: char| c.is_ascii_lowercase())).then(|| id.into())
+}
+
+fn poll(url: String, mut cursor: Value) -> Step {
+    let polls = cursor["polls"].as_u64().unwrap_or(0) + 1;
+    cursor["polls"] = json!(polls);
+    let mut r = get(url);
+    r.wait_ms = 2000;
+    request(r, cursor)
+}
+
+/// Lists the organizations a project can go in. Personal accounts have none.
+fn owners(call: &Call) -> Result<Step, &'static str> {
+    let Some(response) = &call.response else {
+        return Ok(request(
+            post(format!("{PROJECTS}/organizations:search"), json!({})),
+            Value::Null,
+        ));
+    };
+    let mut owners = Vec::new();
+    if (200..300).contains(&response.status) {
+        let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
+        for o in v["organizations"].as_array().into_iter().flatten() {
+            let id = o["name"]
+                .as_str()
+                .ok_or("name")?
+                .trim_start_matches("organizations/");
+            owners.push(Owner {
+                id: id.into(),
+                name: o["displayName"].as_str().unwrap_or(id).into(),
+            });
+        }
+    }
+    owners.push(Owner {
+        id: String::new(),
+        name: "No organization".into(),
+    });
+    Ok(done(Outcome::Owners(owners)))
+}
+
+/// Creates a project, waits for it, then turns on the Gemini and API Keys APIs in it.
+fn create_project(call: &Call, owner: &str, name: &str) -> Result<Step, &'static str> {
+    let Some(response) = &call.response else {
+        let Some(id) = project_id(name) else {
+            return Ok(error(
+                "name_unavailable",
+                "Google project IDs are 6 to 30 letters, digits or hyphens, starting with a letter. Choose a longer name.",
+            ));
+        };
+        let display: String = name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || " -'!\"".contains(*c))
+            .take(30)
+            .collect();
+        let mut body = json!({
+            "projectId": id,
+            "name": if display.trim().len() >= 4 { display.trim() } else { &id },
+        });
+        if !owner.is_empty() {
+            body["parent"] = json!({"type": "organization", "id": owner});
+        }
+        return Ok(request(
+            post(format!("{PROJECTS}/projects"), body),
+            json!({"stage": "project", "id": id}),
+        ));
+    };
+    let stage = call.cursor["stage"].as_str().unwrap_or("");
+    let id = call.cursor["id"].as_str().ok_or("id")?;
+    let project = |note: &str| {
+        done(Outcome::Resource(Resource {
+            id: id.into(),
+            name: name.into(),
+            kind: "project".into(),
+            url: format!("https://console.cloud.google.com/home/dashboard?project={id}"),
+            note: note.into(),
+            ..Default::default()
+        }))
+    };
+    const API_NOTE: &str = "Turn on the Gemini API in this project before creating keys.";
+    if stage == "services" {
+        if !(200..300).contains(&response.status) {
+            return Ok(project(API_NOTE));
+        }
+    } else if let Some(err) = name_error(response, "project").or_else(|| provider_error(response)) {
+        return Ok(err);
+    }
+    let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
+    let polls = call.cursor["polls"].as_u64().unwrap_or(0);
+    if v["done"] != true {
+        let op = v["name"].as_str().ok_or("operation")?;
+        if polls >= PROJECT_POLLS {
+            return Ok(if stage == "project" {
+                error(
+                    "pending",
+                    "Google is still creating the project. Refresh in a minute to see it.",
+                )
+            } else {
+                project(
+                    "Google is still turning on the Gemini API. Wait a minute before creating keys.",
+                )
+            });
+        }
+        let base = if stage == "project" {
+            PROJECTS
+        } else {
+            SERVICES
+        };
+        return Ok(poll(format!("{base}/{op}"), call.cursor.clone()));
+    }
+    if stage == "services" {
+        return Ok(project(if v["error"].is_null() { "" } else { API_NOTE }));
+    }
+    if let Some(message) = v["error"]["message"].as_str() {
+        return Ok(error(
+            "create_failed",
+            &format!("Google could not create the project: {message}"),
+        ));
+    }
+    Ok(request(
+        post(
+            format!("{SERVICES}/projects/{}/services:batchEnable", segment(id)),
+            json!({"serviceIds": [GEMINI, "apikeys.googleapis.com"]}),
+        ),
+        json!({"stage": "services", "id": id}),
+    ))
+}
+
 fn execute(call: Call) -> Result<Step, &'static str> {
+    match &call.operation {
+        Operation::ListOwners => return owners(&call),
+        Operation::CreateResource { owner, name, .. } => return create_project(&call, owner, name),
+        _ => {}
+    }
     if let Some(response) = &call.response {
         // Projects that never enabled the API Keys API have no keys to list.
         if response.status == 403
@@ -398,6 +544,120 @@ mod tests {
         };
         assert_eq!(c.id, "k9");
         assert!(c.value.is_some() && c.can_rotate);
+    }
+    fn new_project() -> Operation {
+        Operation::CreateResource {
+            owner: "42".into(),
+            name: "My Gemini App".into(),
+            options: BTreeMap::new(),
+        }
+    }
+    #[test]
+    fn project_ids_come_from_the_name() {
+        assert_eq!(
+            project_id("My Gemini App").as_deref(),
+            Some("my-gemini-app")
+        );
+        assert_eq!(project_id("app"), None);
+        assert_eq!(project_id("1st project"), None);
+        assert_eq!(
+            project_id("a very long project name that goes on").as_deref(),
+            Some("a-very-long-project-name-that")
+        );
+    }
+    #[test]
+    fn organizations_come_with_no_organization() {
+        let Step::Complete {
+            result: Outcome::Owners(o),
+        } = reply(
+            Operation::ListOwners,
+            Value::Null,
+            200,
+            json!({"organizations": [{"name": "organizations/42", "displayName": "acme.dev"}]}),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!((o[0].id.as_str(), o[0].name.as_str()), ("42", "acme.dev"));
+        assert_eq!(o[1].id, "");
+        let Step::Complete {
+            result: Outcome::Owners(o),
+        } = reply(Operation::ListOwners, Value::Null, 403, json!({}))
+        else {
+            panic!()
+        };
+        assert_eq!(o.len(), 1);
+    }
+    #[test]
+    fn new_projects_wait_and_turn_on_gemini() {
+        let request = start(new_project());
+        assert!(request.url.ends_with("/v1/projects"));
+        let body = request.body.unwrap();
+        assert_eq!(body["projectId"], "my-gemini-app");
+        assert_eq!(body["parent"]["id"], "42");
+        let Step::Request { request, cursor } = reply(
+            new_project(),
+            json!({"stage": "project", "id": "my-gemini-app"}),
+            200,
+            json!({"name": "operations/cp.1"}),
+        ) else {
+            panic!()
+        };
+        assert!(request.url.ends_with("/v1/operations/cp.1"));
+        assert_eq!(request.wait_ms, 2000);
+        let Step::Request { request, cursor } = reply(
+            new_project(),
+            cursor,
+            200,
+            json!({"name": "operations/cp.1", "done": true, "response": {}}),
+        ) else {
+            panic!()
+        };
+        assert!(
+            request
+                .url
+                .ends_with("/projects/my-gemini-app/services:batchEnable")
+        );
+        let Step::Request { request, cursor } = reply(
+            new_project(),
+            cursor,
+            200,
+            json!({"name": "operations/acf.2"}),
+        ) else {
+            panic!()
+        };
+        assert!(request.url.starts_with(SERVICES));
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = reply(
+            new_project(),
+            cursor,
+            200,
+            json!({"name": "operations/acf.2", "done": true, "response": {}}),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!((r.id.as_str(), r.note.as_str()), ("my-gemini-app", ""));
+    }
+    #[test]
+    fn projects_are_kept_when_gemini_cannot_be_turned_on() {
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = reply(
+            new_project(),
+            json!({"stage": "services", "id": "my-gemini-app"}),
+            403,
+            json!({}),
+        )
+        else {
+            panic!()
+        };
+        assert!(r.note.contains("Gemini API"));
+        assert!(matches!(
+            reply(new_project(), json!({"stage": "project", "id": "my-gemini-app"}), 409, json!({})),
+            Step::Error { code, .. } if code == "name_unavailable"
+        ));
     }
     #[test]
     fn validation_sends_the_key_in_the_gemini_header() {

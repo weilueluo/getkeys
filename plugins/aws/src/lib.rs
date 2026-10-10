@@ -73,6 +73,56 @@ struct Caller {
     arn: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PoliciesResponse {
+    list_policies_result: PoliciesResult,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct PoliciesResult {
+    #[serde(default)]
+    policies: Policies,
+    #[serde(default)]
+    is_truncated: bool,
+    marker: Option<String>,
+}
+#[derive(Default, Deserialize)]
+struct Policies {
+    #[serde(default)]
+    member: Vec<Policy>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Policy {
+    policy_name: String,
+    arn: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct GroupsResponse {
+    list_groups_result: GroupsResult,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct GroupsResult {
+    #[serde(default)]
+    groups: Groups,
+    #[serde(default)]
+    is_truncated: bool,
+    marker: Option<String>,
+}
+#[derive(Default, Deserialize)]
+struct Groups {
+    #[serde(default)]
+    member: Vec<Group>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Group {
+    group_name: String,
+}
+
 fn iam(action: &str, resource: &str) -> HttpRequest {
     let mut req = get("https://iam.amazonaws.com/".into());
     req.method = "POST".into();
@@ -122,11 +172,180 @@ fn credential(key: Key, resource: &str) -> RemoteCredential {
         details,
     }
 }
+/// Lists the account's choices for a new IAM user: its permission policies or its groups.
+fn choices(call: &Call, option: &str) -> Result<Step, &'static str> {
+    let action = match option {
+        "policy" => "ListPolicies",
+        "group" => "ListGroups",
+        _ => return Ok(error("unsupported", "AWS has no such choice.")),
+    };
+    let page = |marker: Option<String>| {
+        let mut req = iam(action, "");
+        req.form.insert("MaxItems".into(), "1000".into());
+        if option == "policy" {
+            req.form
+                .insert("PolicyUsageFilter".into(), "PermissionsPolicy".into());
+        }
+        if let Some(marker) = marker {
+            req.form.insert("Marker".into(), marker);
+        }
+        req
+    };
+    let Some(response) = &call.response else {
+        return Ok(request(page(None), json!({"choices": []})));
+    };
+    if let Some(err) = provider_error(response) {
+        return Ok(err);
+    }
+    let mut found: Vec<Choice> =
+        serde_json::from_value(call.cursor["choices"].clone()).unwrap_or_default();
+    let (truncated, marker) = if option == "policy" {
+        let r: PoliciesResponse =
+            quick_xml::de::from_str(&response.body).map_err(|_| "policies")?;
+        found.extend(r.list_policies_result.policies.member.into_iter().map(|p| {
+            let managed = p.arn.contains(":aws:policy/");
+            Choice {
+                label: if managed {
+                    format!("{} (AWS managed)", p.policy_name)
+                } else {
+                    p.policy_name
+                },
+                value: p.arn,
+            }
+        }));
+        (
+            r.list_policies_result.is_truncated,
+            r.list_policies_result.marker,
+        )
+    } else {
+        let r: GroupsResponse = quick_xml::de::from_str(&response.body).map_err(|_| "groups")?;
+        found.extend(
+            r.list_groups_result
+                .groups
+                .member
+                .into_iter()
+                .map(|g| Choice {
+                    value: g.group_name.clone(),
+                    label: g.group_name,
+                }),
+        );
+        (
+            r.list_groups_result.is_truncated,
+            r.list_groups_result.marker,
+        )
+    };
+    if truncated {
+        return Ok(request(
+            page(Some(marker.ok_or("marker")?)),
+            json!({"choices": found}),
+        ));
+    }
+    // The account's own policies come before the many AWS managed ones.
+    found.sort_by_key(|c| (c.value.contains(":aws:policy/"), c.label.to_lowercase()));
+    let none = if option == "policy" {
+        "No permissions"
+    } else {
+        "No group"
+    };
+    found.insert(
+        0,
+        Choice {
+            value: String::new(),
+            label: none.into(),
+        },
+    );
+    Ok(done(Outcome::Choices(found)))
+}
+
+/// IAM user names are up to 64 letters, digits and `+=,.@_-`.
+fn valid_user_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "+=,.@_-".contains(c))
+}
+
+/// Creates an IAM user, then gives it the chosen policy and group.
+fn create_user(call: &Call, name: &str, options: &BTreeMap<String, String>) -> Step {
+    let option = |key: &str| options.get(key).filter(|v| !v.is_empty()).cloned();
+    let stage = call.cursor["stage"].as_str().unwrap_or("");
+    if let Some(response) = &call.response {
+        if stage == "user"
+            && let Some(err) = name_error(response, "IAM user")
+        {
+            return err;
+        }
+        if let Some(err) = provider_error(response) {
+            if stage == "user" {
+                return err;
+            }
+            let what = if stage == "policy" {
+                "its permissions"
+            } else {
+                "its group"
+            };
+            let Step::Error { code, message } = err else {
+                return err;
+            };
+            return error(
+                &code,
+                &format!("AWS created the IAM user {name}, but couldn't add {what}: {message}"),
+            );
+        }
+    } else if !valid_user_name(name) {
+        return error(
+            "name_unavailable",
+            "IAM user names are up to 64 letters, digits and + = , . @ _ -",
+        );
+    }
+    let next = match (call.response.is_some(), stage) {
+        (false, _) => Some(("user", iam("CreateUser", name))),
+        (true, "user") => option("policy")
+            .map(|arn| {
+                let mut r = iam("AttachUserPolicy", name);
+                r.form.insert("PolicyArn".into(), arn);
+                ("policy", r)
+            })
+            .or_else(|| group(name, option("group"))),
+        (true, "policy") => group(name, option("group")),
+        _ => None,
+    };
+    match next {
+        Some((stage, req)) => request(req, json!({"stage": stage})),
+        None => done(Outcome::Resource(Resource {
+            id: name.into(),
+            name: name.into(),
+            kind: "iam_user".into(),
+            url: format!(
+                "https://console.aws.amazon.com/iam/home#/users/details/{}",
+                segment(name)
+            ),
+            ..Default::default()
+        })),
+    }
+}
+
+fn group(name: &str, group: Option<String>) -> Option<(&'static str, HttpRequest)> {
+    group.map(|g| {
+        let mut r = iam("AddUserToGroup", name);
+        r.form.insert("GroupName".into(), g);
+        ("group", r)
+    })
+}
+
 pub fn handle(call: Call) -> Step {
     execute(call)
         .unwrap_or_else(|_| error("invalid_response", "AWS returned an unexpected response."))
 }
 fn execute(call: Call) -> Result<Step, &'static str> {
+    match &call.operation {
+        Operation::ListChoices { option } => return choices(&call, option),
+        Operation::CreateResource { name, options, .. } => {
+            return Ok(create_user(&call, name, options));
+        }
+        _ => {}
+    }
     if let Some(response) = &call.response {
         if let Some(err) = provider_error(response) {
             return Ok(err);
@@ -310,6 +529,140 @@ mod tests {
                 assert!(matches!(result, Step::Error { code, .. } if code == "wrong_user"));
             }
         }
+    }
+    fn reply(operation: Operation, cursor: serde_json::Value, body: Option<&str>) -> Step {
+        handle(Call {
+            operation,
+            config: BTreeMap::new(),
+            cursor,
+            response: body.map(|b| HttpResponse {
+                status: 200,
+                body: b.into(),
+                headers: BTreeMap::new(),
+            }),
+        })
+    }
+    #[test]
+    fn policies_are_listed_page_by_page_with_the_account_s_own_first() {
+        let op = Operation::ListChoices {
+            option: "policy".into(),
+        };
+        let Step::Request { request, cursor } = reply(op.clone(), serde_json::Value::Null, None)
+        else {
+            panic!()
+        };
+        assert_eq!(request.form["Action"], "ListPolicies");
+        let Step::Request { request, cursor } = reply(
+            op.clone(),
+            cursor,
+            Some(
+                "<ListPoliciesResponse><ListPoliciesResult><IsTruncated>true</IsTruncated><Marker>m1</Marker><Policies><member><PolicyName>ReadOnlyAccess</PolicyName><Arn>arn:aws:iam::aws:policy/ReadOnlyAccess</Arn></member></Policies></ListPoliciesResult></ListPoliciesResponse>",
+            ),
+        ) else {
+            panic!()
+        };
+        assert_eq!(request.form["Marker"], "m1");
+        let Step::Complete {
+            result: Outcome::Choices(c),
+        } = reply(
+            op,
+            cursor,
+            Some(
+                "<ListPoliciesResponse><ListPoliciesResult><IsTruncated>false</IsTruncated><Policies><member><PolicyName>app-s3</PolicyName><Arn>arn:aws:iam::123456789012:policy/app-s3</Arn></member></Policies></ListPoliciesResult></ListPoliciesResponse>",
+            ),
+        )
+        else {
+            panic!()
+        };
+        let labels: Vec<_> = c.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["No permissions", "app-s3", "ReadOnlyAccess (AWS managed)"]
+        );
+        assert_eq!(c[0].value, "");
+    }
+    #[test]
+    fn groups_include_no_group() {
+        let Step::Complete {
+            result: Outcome::Choices(c),
+        } = reply(
+            Operation::ListChoices {
+                option: "group".into(),
+            },
+            json!({"choices": []}),
+            Some(
+                "<ListGroupsResponse><ListGroupsResult><IsTruncated>false</IsTruncated><Groups><member><GroupName>developers</GroupName></member></Groups></ListGroupsResult></ListGroupsResponse>",
+            ),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!(
+            (c[0].label.as_str(), c[1].value.as_str()),
+            ("No group", "developers")
+        );
+    }
+    #[test]
+    fn new_users_get_the_chosen_policy_and_group() {
+        let op = Operation::CreateResource {
+            owner: String::new(),
+            name: "ci-bot".into(),
+            options: BTreeMap::from([
+                (
+                    "policy".into(),
+                    "arn:aws:iam::aws:policy/ReadOnlyAccess".into(),
+                ),
+                ("group".into(), "developers".into()),
+            ]),
+        };
+        let Step::Request { request, cursor } = reply(op.clone(), serde_json::Value::Null, None)
+        else {
+            panic!()
+        };
+        assert_eq!(request.form["Action"], "CreateUser");
+        assert_eq!(request.form["UserName"], "ci-bot");
+        let Step::Request { request, cursor } = reply(op.clone(), cursor, Some("<ok/>")) else {
+            panic!()
+        };
+        assert_eq!(request.form["Action"], "AttachUserPolicy");
+        assert_eq!(
+            request.form["PolicyArn"],
+            "arn:aws:iam::aws:policy/ReadOnlyAccess"
+        );
+        let Step::Request { request, cursor } = reply(op.clone(), cursor, Some("<ok/>")) else {
+            panic!()
+        };
+        assert_eq!(request.form["Action"], "AddUserToGroup");
+        assert_eq!(request.form["GroupName"], "developers");
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = reply(op, cursor, Some("<ok/>"))
+        else {
+            panic!()
+        };
+        assert_eq!((r.id.as_str(), r.kind.as_str()), ("ci-bot", "iam_user"));
+    }
+    #[test]
+    fn new_users_without_choices_are_done_once_created() {
+        let op = Operation::CreateResource {
+            owner: String::new(),
+            name: "bot".into(),
+            options: BTreeMap::from([("policy".into(), String::new())]),
+        };
+        assert!(matches!(
+            reply(op, json!({"stage": "user"}), Some("<ok/>")),
+            Step::Complete {
+                result: Outcome::Resource(_)
+            }
+        ));
+        let bad = Operation::CreateResource {
+            owner: String::new(),
+            name: "has space".into(),
+            options: BTreeMap::new(),
+        };
+        assert!(
+            matches!(reply(bad, serde_json::Value::Null, None), Step::Error { code, .. } if code == "name_unavailable")
+        );
     }
     #[test]
     fn refuses_creation_when_both_key_slots_are_used() {

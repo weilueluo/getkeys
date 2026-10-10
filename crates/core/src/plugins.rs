@@ -105,7 +105,10 @@ pub fn validate_manifest(m: &Manifest) -> Result<()> {
     if let Some(v) = &m.validate {
         crate::http::validate_url(&v.url, &m.hosts).context("Invalid provider check URL")?;
     }
-    for page in [&m.token_page, &m.key_page] {
+    for page in [&m.token_page, &m.key_page]
+        .into_iter()
+        .chain(m.new_resource.as_ref().map(|r| &r.page))
+    {
         ensure!(
             page.is_empty() || page.starts_with("https://"),
             "Provider pages must use HTTPS"
@@ -372,6 +375,9 @@ impl Runtime {
                     });
                     if request.method != "GET" && !aws_read {
                         *may_have_changed = true;
+                    }
+                    if request.wait_ms > 0 {
+                        std::thread::sleep(Duration::from_millis(request.wait_ms.min(10_000)));
                     }
                     let response = send(request)?;
                     if (400..500).contains(&response.status) {

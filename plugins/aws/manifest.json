@@ -2,7 +2,7 @@
   "id": "official.aws",
   "name": "AWS",
   "publisher": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sign in with IAM Identity Center and manage IAM access keys.",
   "homepage": "https://aws.amazon.com",
   "category": "cloud",
@@ -15,7 +15,9 @@
     "create_credential",
     "validate_credential",
     "deactivate_credential",
-    "revoke_credential"
+    "revoke_credential",
+    "create_resource",
+    "list_choices"
   ],
   "fields": [
     {
@@ -87,5 +89,13 @@
     { "kind": "aws_env", "label": "Environment" },
     { "kind": "aws_sso", "label": "IAM Identity Center" },
     { "kind": "aws_profiles", "label": "AWS CLI profile" }
-  ]
+  ],
+  "new_resource": {
+    "noun": "IAM user",
+    "options": [
+      { "key": "policy", "label": "Permissions", "listed": true },
+      { "key": "group", "label": "Group", "listed": true }
+    ],
+    "page": "https://console.aws.amazon.com/iam/home#/users/create"
+  }
 }

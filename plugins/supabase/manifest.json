@@ -2,7 +2,7 @@
   "id": "official.supabase",
   "name": "Supabase",
   "publisher": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Create projects, find their keys, and rotate server credentials.",
   "homepage": "https://supabase.com",
   "category": "database",
@@ -79,6 +79,7 @@
       "key": "db_pass",
       "label": "Database password",
       "env": "SUPABASE_DB_PASSWORD"
-    }
+    },
+    "page": "https://supabase.com/dashboard/new"
   }
 }

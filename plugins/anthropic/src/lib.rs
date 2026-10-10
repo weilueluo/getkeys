@@ -72,7 +72,10 @@ fn key(k: &Value, resource: &str) -> Result<RemoteCredential, &'static str> {
 
 fn execute(call: Call) -> Result<Step, &'static str> {
     if let Some(response) = &call.response {
-        if let Some(error) = provider_error(response) {
+        let named = matches!(call.operation, Operation::CreateResource { .. })
+            .then(|| name_error(response, "workspace"))
+            .flatten();
+        if let Some(error) = named.or_else(|| provider_error(response)) {
             return Ok(error);
         }
         if matches!(
@@ -84,6 +87,14 @@ fn execute(call: Call) -> Result<Step, &'static str> {
             return Ok(done(Outcome::Done));
         }
         let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
+        if matches!(call.operation, Operation::CreateResource { .. }) {
+            return Ok(done(Outcome::Resource(Resource {
+                id: v["id"].as_str().ok_or("id")?.into(),
+                name: v["name"].as_str().ok_or("name")?.into(),
+                kind: "workspace".into(),
+                ..Default::default()
+            })));
+        }
         let Some(path) = list_path(&call.operation) else {
             return Ok(done(Outcome::Identity(Identity {
                 id: v["id"].as_str().ok_or("id")?.into(),
@@ -133,6 +144,12 @@ fn execute(call: Call) -> Result<Step, &'static str> {
     }
     let req = match &call.operation {
         Operation::Identity => api(format!("{API}/organizations/me")),
+        Operation::CreateResource { name, .. } => {
+            let mut r = api(format!("{API}/organizations/workspaces"));
+            r.method = "POST".into();
+            r.body = Some(json!({"name": name}));
+            r
+        }
         Operation::ValidateCredential { .. } => {
             let mut r = api(format!("{API}/models?limit=1"));
             r.auth = RequestAuth::Candidate;
@@ -247,6 +264,32 @@ mod tests {
             panic!()
         };
         assert_eq!((r[0].id.as_str(), r[1].id.as_str()), (DEFAULT, "wrkspc_1"));
+    }
+    #[test]
+    fn creates_workspaces() {
+        let op = Operation::CreateResource {
+            owner: String::new(),
+            name: "Prod".into(),
+            options: BTreeMap::new(),
+        };
+        let Step::Request { request, .. } = call(op.clone(), Value::Null, None) else {
+            panic!()
+        };
+        assert_eq!(request.method, "POST");
+        assert!(request.url.ends_with("/v1/organizations/workspaces"));
+        assert_eq!(request.headers["x-getkeys-auth-header"], "x-api-key");
+        assert_eq!(request.body.unwrap()["name"], "Prod");
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = call(
+            op,
+            Value::Null,
+            Some(json!({"id":"wrkspc_9","name":"Prod","type":"workspace"})),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!((r.id.as_str(), r.kind.as_str()), ("wrkspc_9", "workspace"));
     }
     #[test]
     fn revoking_archives_and_deactivating_disables() {

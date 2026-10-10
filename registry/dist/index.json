@@ -5,7 +5,7 @@
         "id": "official.anthropic",
         "name": "Anthropic",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Connect with an Admin API key to see, disable and archive your organization's Claude API keys.",
         "homepage": "https://www.anthropic.com",
         "kind": "managed",
@@ -23,7 +23,8 @@
           "validate_credential",
           "deactivate_credential",
           "revoke_credential",
-          "guide"
+          "guide",
+          "create_resource"
         ],
         "fields": [],
         "credential_fields": [
@@ -76,17 +77,23 @@
             "kind": "env",
             "var": "ANTHROPIC_API_KEY"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "workspace",
+          "options": [],
+          "generated": null,
+          "page": "https://console.anthropic.com/settings/workspaces"
+        }
       },
-      "wasm": "official.anthropic-0.1.0.wasm",
-      "sha256": "a6d09e81561f89d29085bc18b6802b6cef965a055c1d78ba4350be97fb7a48c5"
+      "wasm": "official.anthropic-0.2.0.wasm",
+      "sha256": "36da85bee425414dd4bcebf6b1ca4486a23d1a8472c17e833f5844b2746af852"
     },
     {
       "manifest": {
         "id": "official.aws",
         "name": "AWS",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Sign in with IAM Identity Center and manage IAM access keys.",
         "homepage": "https://aws.amazon.com",
         "kind": "managed",
@@ -105,7 +112,9 @@
           "create_credential",
           "validate_credential",
           "deactivate_credential",
-          "revoke_credential"
+          "revoke_credential",
+          "create_resource",
+          "list_choices"
         ],
         "fields": [
           {
@@ -219,10 +228,31 @@
             "field": "token",
             "kind": "aws_profiles"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "IAM user",
+          "options": [
+            {
+              "key": "policy",
+              "label": "Permissions",
+              "choices": [],
+              "default": "",
+              "listed": true
+            },
+            {
+              "key": "group",
+              "label": "Group",
+              "choices": [],
+              "default": "",
+              "listed": true
+            }
+          ],
+          "generated": null,
+          "page": "https://console.aws.amazon.com/iam/home#/users/create"
+        }
       },
-      "wasm": "official.aws-0.1.0.wasm",
-      "sha256": "0a8fe3fcb4c728e8394b1643b476d1f31f755ee85db99bc5a5a0f9e5d717544a"
+      "wasm": "official.aws-0.2.0.wasm",
+      "sha256": "03ea456514b29e5abefa3c916dbe45e4d2d500ed16e78aecd06e8e50cf37789a"
     },
     {
       "manifest": {
@@ -290,7 +320,7 @@
         ]
       },
       "wasm": "official.cloudflare-0.1.0.wasm",
-      "sha256": "40d3b2688cf45564263cda011ffc968e671f96a6c599b410eab6924bb9404f74"
+      "sha256": "e0d806a5ab158e8f5bdf09c5ca913025b6e3200e9ad6f609f2a557f3ee1e1686"
     },
     {
       "manifest": {
@@ -478,7 +508,7 @@
         "id": "official.gemini",
         "name": "Gemini",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Find, create and delete Gemini API keys in your Google Cloud projects. Signs in with a gcloud access token, which lasts an hour.",
         "homepage": "https://ai.google.dev",
         "kind": "managed",
@@ -487,7 +517,8 @@
           "www.googleapis.com",
           "cloudresourcemanager.googleapis.com",
           "apikeys.googleapis.com",
-          "generativelanguage.googleapis.com"
+          "generativelanguage.googleapis.com",
+          "serviceusage.googleapis.com"
         ],
         "auth": {
           "kind": "token"
@@ -499,7 +530,9 @@
           "read_credential",
           "create_credential",
           "validate_credential",
-          "revoke_credential"
+          "revoke_credential",
+          "list_owners",
+          "create_resource"
         ],
         "fields": [],
         "credential_fields": [
@@ -561,17 +594,23 @@
             "kind": "env",
             "var": "GOOGLE_API_KEY"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "project",
+          "options": [],
+          "generated": null,
+          "page": "https://console.cloud.google.com/projectcreate"
+        }
       },
-      "wasm": "official.gemini-0.1.0.wasm",
-      "sha256": "7450cf0d881efaf4e4389ef956296f2331345493bd4c6253309b638a6b18a0c0"
+      "wasm": "official.gemini-0.2.0.wasm",
+      "sha256": "613029a9def8d47de6d8dce851af1a96c62b6853336d417551a32c60e88db6dd"
     },
     {
       "manifest": {
         "id": "official.github",
         "name": "GitHub",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Make fine-grained GitHub tokens on a filled-in page, and revoke them for you.",
         "homepage": "https://github.com",
         "kind": "managed",
@@ -651,10 +690,11 @@
             "kind": "env",
             "var": "GITHUB_TOKEN"
           }
-        ]
+        ],
+        "account_keys": true
       },
-      "wasm": "official.github-0.1.0.wasm",
-      "sha256": "00059d4228c2e6f3eb68a01f06e68f048acb9a443681ea69f6edfd9d6750aaf8"
+      "wasm": "official.github-0.2.0.wasm",
+      "sha256": "20104f04b42d6a66cf1c85b625a419d8eed7671b873c027431847f56145b6d45"
     },
     {
       "manifest": {
@@ -723,7 +763,7 @@
         ]
       },
       "wasm": "official.gitlab-0.1.0.wasm",
-      "sha256": "ae6938a68d1bb8b3b8f8c539dbbacb4a2bf80925f8d15ba7084e15d6dda48031"
+      "sha256": "9ec75478ebe60011341f8dd62fac009a48eaccebd62d3b928c2c0f38f31fcce1"
     },
     {
       "manifest": {
@@ -912,7 +952,7 @@
         "id": "official.openai",
         "name": "OpenAI",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Connect with an admin key to list, create and revoke project and admin keys.",
         "homepage": "https://openai.com",
         "kind": "managed",
@@ -930,7 +970,8 @@
           "create_credential",
           "validate_credential",
           "revoke_credential",
-          "guide"
+          "guide",
+          "create_resource"
         ],
         "fields": [],
         "credential_fields": [
@@ -981,17 +1022,23 @@
             "kind": "env",
             "var": "OPENAI_API_KEY"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "project",
+          "options": [],
+          "generated": null,
+          "page": "https://platform.openai.com/settings/organization/projects"
+        }
       },
-      "wasm": "official.openai-0.1.0.wasm",
-      "sha256": "b186e17c379a7ee7f5ddf46032376d36a8f62d78fa8ddd9bab2f4f80321b92a2"
+      "wasm": "official.openai-0.2.0.wasm",
+      "sha256": "cbae359cce9afa285d3517c72215bb3e249bdf832eb60e32abdc347411aa74c8"
     },
     {
       "manifest": {
         "id": "official.openrouter",
         "name": "OpenRouter",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Connect with a management key to list, create, disable and delete API keys.",
         "homepage": "https://openrouter.ai",
         "kind": "managed",
@@ -1009,7 +1056,8 @@
           "create_credential",
           "validate_credential",
           "deactivate_credential",
-          "revoke_credential"
+          "revoke_credential",
+          "create_resource"
         ],
         "fields": [],
         "credential_fields": [
@@ -1059,10 +1107,15 @@
             "kind": "env",
             "var": "OPENROUTER_API_KEY"
           }
-        ]
+        ],
+        "new_resource": {
+          "noun": "workspace",
+          "options": [],
+          "generated": null
+        }
       },
-      "wasm": "official.openrouter-0.1.0.wasm",
-      "sha256": "b974f0444c2e4607ea9299dc2dfbd8b55ec896a67ee2797a2b5b8e09e8c6544b"
+      "wasm": "official.openrouter-0.2.0.wasm",
+      "sha256": "9fc4c14e8d8cc9a339f7f440402e9105ad607746550d3092e6b257a28edb56bb"
     },
     {
       "manifest": {
@@ -1312,7 +1365,7 @@
         "id": "official.supabase",
         "name": "Supabase",
         "publisher": "getkeys",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "description": "Create projects, find their keys, and rotate server credentials.",
         "homepage": "https://supabase.com",
         "kind": "managed",
@@ -1443,11 +1496,12 @@
             "required": false,
             "secret": true,
             "env": "SUPABASE_DB_PASSWORD"
-          }
+          },
+          "page": "https://supabase.com/dashboard/new"
         }
       },
-      "wasm": "official.supabase-0.1.0.wasm",
-      "sha256": "01b28a8206a049fc174c34852e96e7081ad7d25aa9ee35c0c6d0ee139874d9ff"
+      "wasm": "official.supabase-0.2.0.wasm",
+      "sha256": "8b49a40beac6c8a9e556a8819e5e0e3d150f624fd9027da608694a1ac1cf6cfb"
     },
     {
       "manifest": {
@@ -1594,7 +1648,7 @@
         ]
       },
       "wasm": "official.vercel-0.1.0.wasm",
-      "sha256": "b3dfaef726f92a5072aeb409835088583525efeb66c83d0ecd43669df65c3e35"
+      "sha256": "5e62e8928aea3babacfbd3cb094b4728ddfaed3de630492168f587a647777bd6"
     },
     {
       "manifest": {

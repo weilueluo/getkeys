@@ -23,6 +23,15 @@ fn keys_url(resource: &str, offset: usize) -> String {
     url
 }
 
+/// A workspace slug: lowercase letters and digits in runs joined by single hyphens.
+fn slug(name: &str) -> String {
+    name.to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 fn key_url(hash: &str) -> String {
     format!("{API}/keys/{}", segment(hash))
 }
@@ -58,7 +67,10 @@ fn key(k: &Value, resource: &str) -> Result<RemoteCredential, &'static str> {
 
 fn execute(call: Call) -> Result<Step, &'static str> {
     if let Some(response) = &call.response {
-        if let Some(error) = provider_error(response) {
+        let named = matches!(call.operation, Operation::CreateResource { .. })
+            .then(|| name_error(response, "workspace"))
+            .flatten();
+        if let Some(error) = named.or_else(|| provider_error(response)) {
             return Ok(error);
         }
         if matches!(
@@ -71,6 +83,12 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         }
         let v: Value = serde_json::from_str(&response.body).map_err(|_| "json")?;
         return Ok(match &call.operation {
+            Operation::CreateResource { .. } => done(Outcome::Resource(Resource {
+                id: v["data"]["id"].as_str().ok_or("id")?.into(),
+                name: v["data"]["name"].as_str().ok_or("name")?.into(),
+                kind: "workspace".into(),
+                ..Default::default()
+            })),
             Operation::Identity => {
                 let d = &v["data"];
                 if d["is_management_key"] != true && d["is_provisioning_key"] != true {
@@ -181,6 +199,19 @@ fn execute(call: Call) -> Result<Step, &'static str> {
             r.method = "POST".into();
             r.body = Some(body);
             r
+        }
+        Operation::CreateResource { name, .. } => {
+            let slug = slug(name);
+            if slug.is_empty() {
+                return Ok(error(
+                    "name_unavailable",
+                    "Give the workspace a name with letters or digits.",
+                ));
+            }
+            post(
+                format!("{API}/workspaces"),
+                json!({"name": name, "slug": slug}),
+            )
         }
         Operation::DeactivateCredential { credential, .. } => {
             let mut r = get(key_url(credential));
@@ -325,6 +356,35 @@ mod tests {
         };
         assert_eq!(c.id, "h3");
         assert!(c.value.is_some());
+    }
+    #[test]
+    fn creates_workspaces_with_a_slug() {
+        let op = Operation::CreateResource {
+            owner: String::new(),
+            name: "My  App_2".into(),
+            options: BTreeMap::new(),
+        };
+        let Step::Request { request, .. } = call(op.clone(), Value::Null, None) else {
+            panic!()
+        };
+        assert_eq!(request.method, "POST");
+        assert!(request.url.ends_with("/api/v1/workspaces"));
+        let body = request.body.unwrap();
+        assert_eq!(
+            (body["name"].as_str(), body["slug"].as_str()),
+            (Some("My  App_2"), Some("my-app-2"))
+        );
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = call(
+            op,
+            Value::Null,
+            Some(json!({"data":{"id":"ws_9","name":"My  App_2","slug":"my-app-2"}})),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!((r.id.as_str(), r.kind.as_str()), ("ws_9", "workspace"));
     }
     #[test]
     fn deactivating_disables_and_revoking_deletes() {

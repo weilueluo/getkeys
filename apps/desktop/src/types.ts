@@ -51,7 +51,13 @@ validate: Validate | null,
  */
 sources: Array<Source>, 
 /**
- * What GetKeys can create in the account, for providers with `create_resource`.
+ * Keys belong to the account itself rather than to one of its resources, so New key
+ * doesn't ask where a key goes. Resources are still listed, for their inventory.
+ */
+account_keys?: boolean, 
+/**
+ * What the provider's keys belong to, and how a new one is made: through
+ * `create_resource`, or on the provider's `page` when its API can't.
  */
 new_resource?: NewResource | null, };
 export type ProviderKind = "managed" | "declarative";
@@ -157,10 +163,18 @@ options: Array<ResourceOption>,
  * A secret GetKeys makes up, sends in the request body field `key` and saves as a key,
  * such as a database password. The provider code never sees it.
  */
-generated: ConfigField | null, };
-export type ResourceOption = { key: string, label: string, choices: Array<Choice>, default: string, };
+generated: ConfigField | null, 
+/**
+ * Provider page where a person makes one, for providers whose API can't.
+ */
+page?: string, };
+export type ResourceOption = { key: string, label: string, choices: Array<Choice>, default: string, 
+/**
+ * The choices come from the account, through `list_choices`, rather than `choices`.
+ */
+listed?: boolean, };
 export type Choice = { value: string, label: string, };
-export type OperationKind = "identity" | "list_resources" | "list_credentials" | "read_credential" | "create_credential" | "validate_credential" | "deactivate_credential" | "revoke_credential" | "rotate_credential" | "write_secret" | "guide" | "list_owners" | "create_resource";
+export type OperationKind = "identity" | "list_resources" | "list_credentials" | "read_credential" | "create_credential" | "validate_credential" | "deactivate_credential" | "revoke_credential" | "rotate_credential" | "write_secret" | "guide" | "list_owners" | "create_resource" | "list_choices";
 export type Resource = { id: string, name: string, kind: string, 
 /**
  * Where to open it on the provider's site.
@@ -273,4 +287,4 @@ path: string,
  * Whether that file already starts GetKeys.
  */
 configured: boolean, };
-export type Command = { "kind": "snapshot" } | { "kind": "discover" } | { "kind": "connect_local", source_id: string, connection_id: string | null, } | { "kind": "open_token_page", plugin_id: string, } | { "kind": "open_key_page", plugin_id: string, connection_id: string | null, resource: string, name: string, } | { "kind": "connect_token", plugin_id: string, fields: { [key in string]: string }, connection_id: string | null, } | { "kind": "reconnect", connection_id: string, } | { "kind": "install", plugin_id: string, accept_permissions: boolean, } | { "kind": "uninstall", plugin_id: string, } | { "kind": "begin_auth", plugin_id: string, config: { [key in string]: string }, } | { "kind": "poll_auth", flow_id: string, } | { "kind": "choose_role", flow_id: string, account_id: string, role: string, } | { "kind": "cancel_auth", flow_id: string, } | { "kind": "resources", connection_id: string, } | { "kind": "sync", connection_id: string, resource: string, } | { "kind": "scan_sources", plugin_id: string | null, } | { "kind": "dedicate", connection_id: string, } | { "kind": "delete", credential_id: string, } | { "kind": "confirm_deleted", credential_id: string, } | { "kind": "import", input: ImportInput, } | { "kind": "create", connection_id: string, resource: string, name: string, } | { "kind": "owners", connection_id: string, } | { "kind": "create_resource", connection_id: string, owner: string, name: string, options: { [key in string]: string }, } | { "kind": "reveal", credential_id: string, } | { "kind": "guide", connection_id: string, resource: string, } | { "kind": "plan_rotation", credential_id: string, name: string, } | { "kind": "plan_replacement", credential_id: string, replacement_id: string, } | { "kind": "confirm_manual_retirement", rotation_id: string, } | { "kind": "advance_rotation", rotation_id: string, } | { "kind": "reconcile_rotation", rotation_id: string, provider_id: string, } | { "kind": "reconcile_retirement", rotation_id: string, } | { "kind": "abort_rotation", rotation_id: string, } | { "kind": "disconnect", connection_id: string, } | { "kind": "export", path: string, passphrase: string, } | { "kind": "check", credential_id: string, } | { "kind": "set_groups", credential_id: string, groups: Array<string>, } | { "kind": "save_custom", credential_id: string | null, name: string, fields: Array<CustomField>, } | { "kind": "save_key", credential_id: string | null, plugin_id: string, name: string, fields: { [key in string]: string }, } | { "kind": "rotate_now", credential_id: string, } | { "kind": "open_vault_folder" } | { "kind": "restore", path: string, passphrase: string, } | { "kind": "resolve", lines: Array<EnvLine>, via: string | null, } | { "kind": "export_env", lines: Array<EnvLine>, via: string | null, } | { "kind": "get_prefs" } | { "kind": "set_prefs", prefs: Prefs, } | { "kind": "agent_status" } | { "kind": "connect_agent", client: AgentClient, } | { "kind": "disconnect_agent", client: AgentClient, };
+export type Command = { "kind": "snapshot" } | { "kind": "discover" } | { "kind": "connect_local", source_id: string, connection_id: string | null, } | { "kind": "open_token_page", plugin_id: string, } | { "kind": "open_key_page", plugin_id: string, connection_id: string | null, resource: string, name: string, } | { "kind": "connect_token", plugin_id: string, fields: { [key in string]: string }, connection_id: string | null, } | { "kind": "reconnect", connection_id: string, } | { "kind": "install", plugin_id: string, accept_permissions: boolean, } | { "kind": "uninstall", plugin_id: string, } | { "kind": "begin_auth", plugin_id: string, config: { [key in string]: string }, } | { "kind": "poll_auth", flow_id: string, } | { "kind": "choose_role", flow_id: string, account_id: string, role: string, } | { "kind": "cancel_auth", flow_id: string, } | { "kind": "resources", connection_id: string, } | { "kind": "sync", connection_id: string, resource: string, } | { "kind": "scan_sources", plugin_id: string | null, } | { "kind": "dedicate", connection_id: string, } | { "kind": "delete", credential_id: string, } | { "kind": "confirm_deleted", credential_id: string, } | { "kind": "import", input: ImportInput, } | { "kind": "create", connection_id: string, resource: string, name: string, } | { "kind": "owners", connection_id: string, } | { "kind": "choices", connection_id: string, option: string, } | { "kind": "open_resource_page", plugin_id: string, } | { "kind": "create_resource", connection_id: string, owner: string, name: string, options: { [key in string]: string }, } | { "kind": "reveal", credential_id: string, } | { "kind": "guide", connection_id: string, resource: string, } | { "kind": "plan_rotation", credential_id: string, name: string, } | { "kind": "plan_replacement", credential_id: string, replacement_id: string, } | { "kind": "confirm_manual_retirement", rotation_id: string, } | { "kind": "advance_rotation", rotation_id: string, } | { "kind": "reconcile_rotation", rotation_id: string, provider_id: string, } | { "kind": "reconcile_retirement", rotation_id: string, } | { "kind": "abort_rotation", rotation_id: string, } | { "kind": "disconnect", connection_id: string, } | { "kind": "export", path: string, passphrase: string, } | { "kind": "check", credential_id: string, } | { "kind": "set_groups", credential_id: string, groups: Array<string>, } | { "kind": "save_custom", credential_id: string | null, name: string, fields: Array<CustomField>, } | { "kind": "save_key", credential_id: string | null, plugin_id: string, name: string, fields: { [key in string]: string }, } | { "kind": "rotate_now", credential_id: string, } | { "kind": "open_vault_folder" } | { "kind": "restore", path: string, passphrase: string, } | { "kind": "resolve", lines: Array<EnvLine>, via: string | null, } | { "kind": "export_env", lines: Array<EnvLine>, via: string | null, } | { "kind": "get_prefs" } | { "kind": "set_prefs", prefs: Prefs, } | { "kind": "agent_status" } | { "kind": "connect_agent", client: AgentClient, } | { "kind": "disconnect_agent", client: AgentClient, };

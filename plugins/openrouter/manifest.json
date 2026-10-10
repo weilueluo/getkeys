@@ -2,7 +2,7 @@
   "id": "official.openrouter",
   "name": "OpenRouter",
   "publisher": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Connect with a management key to list, create, disable and delete API keys.",
   "homepage": "https://openrouter.ai",
   "category": "ai",
@@ -14,7 +14,8 @@
     "create_credential",
     "validate_credential",
     "deactivate_credential",
-    "revoke_credential"
+    "revoke_credential",
+    "create_resource"
   ],
   "fields": [],
   "credential_fields": [
@@ -41,5 +42,6 @@
   "sources": [
     { "kind": "env", "var": "OPENROUTER_MANAGEMENT_KEY" },
     { "kind": "env", "var": "OPENROUTER_API_KEY", "role": "key" }
-  ]
+  ],
+  "new_resource": { "noun": "workspace" }
 }

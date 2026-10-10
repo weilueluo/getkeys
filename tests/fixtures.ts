@@ -2,7 +2,7 @@ import github from '../plugins/github/manifest.json' with { type: 'json' };
 import aws from '../plugins/aws/manifest.json' with { type: 'json' };
 import vercel from '../plugins/vercel/manifest.json' with { type: 'json' };
 import supabase from '../plugins/supabase/manifest.json' with { type: 'json' };
-import type { ConfigField, Manifest, Snapshot } from '../apps/desktop/src/types';
+import type { ConfigField, Manifest, ResourceOption, Snapshot } from '../apps/desktop/src/types';
 // Match the host, which fills `ConfigField` serde defaults before sending manifests.
 const field = (f: Partial<ConfigField>) =>
   ({ placeholder: '', required: false, secret: true, env: '', ...f }) as ConfigField;
@@ -17,6 +17,15 @@ const normalize = (m: object) => {
     key_page: raw.key_page ?? '',
     revoke_by_value: raw.revoke_by_value ?? false,
     account_credentials: raw.account_credentials ?? false,
+    new_resource: raw.new_resource && {
+      ...raw.new_resource,
+      generated: raw.new_resource.generated ?? null,
+      options: (raw.new_resource.options ?? []).map((o: Partial<ResourceOption>) => ({
+        ...o,
+        choices: o.choices ?? [],
+        default: o.default ?? '',
+      })),
+    },
   } as Manifest;
 };
 export function emptySnapshot(): Snapshot {

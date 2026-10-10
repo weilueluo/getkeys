@@ -2,7 +2,7 @@
   "id": "official.gemini",
   "name": "Gemini",
   "publisher": "getkeys",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Find, create and delete Gemini API keys in your Google Cloud projects. Signs in with a gcloud access token, which lasts an hour.",
   "homepage": "https://ai.google.dev",
   "category": "ai",
@@ -10,7 +10,8 @@
     "www.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "apikeys.googleapis.com",
-    "generativelanguage.googleapis.com"
+    "generativelanguage.googleapis.com",
+    "serviceusage.googleapis.com"
   ],
   "operations": [
     "identity",
@@ -19,7 +20,9 @@
     "read_credential",
     "create_credential",
     "validate_credential",
-    "revoke_credential"
+    "revoke_credential",
+    "list_owners",
+    "create_resource"
   ],
   "fields": [],
   "credential_fields": [
@@ -55,5 +58,9 @@
     },
     { "kind": "env", "var": "GEMINI_API_KEY", "role": "key" },
     { "kind": "env", "var": "GOOGLE_API_KEY", "role": "key" }
-  ]
+  ],
+  "new_resource": {
+    "noun": "project",
+    "page": "https://console.cloud.google.com/projectcreate"
+  }
 }

@@ -129,10 +129,11 @@ enum Cli {
         /// The account to create it in, when several are connected
         #[arg(long)]
         account: Option<String>,
-        /// The project the key belongs to, for providers whose keys belong to one
+        /// Where the key belongs, for providers whose keys belong to a project, workspace or
+        /// IAM user
         #[arg(long, conflicts_with = "new_project")]
         project: Option<String>,
-        /// Make a new project with this name for the key
+        /// Make a new project, workspace or IAM user with this name for the key
         #[arg(long, value_name = "NAME")]
         new_project: Option<String>,
         /// The organisation that owns the new project
@@ -141,6 +142,9 @@ enum Cli {
         /// Where the new project runs, such as americas, emea or apac
         #[arg(long, requires = "new_project")]
         region: Option<String>,
+        /// A choice for the new project, such as policy=ReadOnlyAccess or group=developers
+        #[arg(long = "option", value_name = "KEY=VALUE", requires = "new_project")]
+        options: Vec<String>,
         #[arg(long)]
         group: Vec<String>,
     },
@@ -350,6 +354,7 @@ fn run() -> Result<()> {
             new_project,
             owner,
             region,
+            options,
             group,
         } => {
             let snapshot = client.snapshot()?;
@@ -361,6 +366,7 @@ fn run() -> Result<()> {
                 new_project,
                 owner,
                 region,
+                options,
             };
             let saved = new::run(client, request, &mut |line| eprintln!("{line}"))?;
             saved_as(client, saved, group)?;

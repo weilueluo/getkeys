@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpRight, ChevronRight, Lock, LockOpen, Plus, X } from 'lucide-react';
 import type {
+  Choice as Option,
   Created,
   CredentialView,
   Manifest,
-  NewResource,
   Owner,
   PluginView,
   Resource,
+  ResourceOption,
 } from './types';
 import type { Controller } from './controller';
 import { cancelCapture, captureKey, request } from './bridge';
@@ -232,11 +233,15 @@ export function NewKeyDialog({
     : (account ?? (accounts.length === 1 ? accounts[0].id : undefined));
   const connection = accounts.find((c) => c.id === accountId);
   const makesKeys = !!connection && !!manifest?.operations.includes('create_credential');
+  // A new project is made through the API, or on the provider's page when its API can't.
   const makesProjects =
-    !!connection && !!manifest?.new_resource && manifest.operations.includes('create_resource');
+    !!connection &&
+    !!manifest?.new_resource &&
+    (manifest.operations.includes('create_resource') || !!manifest.new_resource.page);
   const needsPlace =
     !!connection &&
     !manifest?.account_credentials &&
+    !manifest?.account_keys &&
     !!manifest?.operations.includes('list_resources');
   const listed = Array.isArray(resources) ? resources : undefined;
   const placeId =
@@ -390,14 +395,14 @@ export function NewKeyDialog({
                   onClick={() => pickAccount(c.id)}
                 />
               ))}
-              {plugin && (
+              {plugin && !accounts.length && (
                 <Choice
                   icon={
                     <span className="choice-icon" aria-hidden="true">
                       <Plus size={14} />
                     </span>
                   }
-                  title={accounts.length ? 'Another account' : `Connect a ${manifest.name} account`}
+                  title={`Connect a ${manifest.name} account`}
                   note={`So ${manifest.name} can make keys for you`}
                   onClick={() => {
                     close();
@@ -429,8 +434,8 @@ export function NewKeyDialog({
               <NewProject
                 {...{ busy, perform }}
                 connectionId={connection.id}
-                manifestName={manifest!.name}
-                newResource={manifest!.new_resource!}
+                manifest={manifest!}
+                known={listed!}
                 cancel={() => setMaking(false)}
                 made={(all, id) => {
                   setResources(all);
@@ -462,7 +467,7 @@ export function NewKeyDialog({
                       </span>
                     }
                     title={`New ${noun}`}
-                    note={`For a key in a ${noun} that doesn’t exist yet`}
+                    note={`For a key in ${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun} that doesn’t exist yet`}
                     onClick={() => setMaking(true)}
                   />
                 )}
@@ -586,27 +591,96 @@ export function NewKeyDialog({
 
 const CUSTOM_PROVIDER = 'custom';
 
-/** Makes a project for the new key, and waits until it can hold keys. */
+/** One of the account's choices for a new project, such as an IAM policy, with a filter. */
+function ListedOption({
+  connectionId,
+  option,
+  perform,
+}: Pick<Controller, 'perform'> & { connectionId: string; option: ResourceOption }) {
+  const [choices, setChoices] = useState<Option[] | 'failed'>();
+  const [find, setFind] = useState('');
+  const [value, setValue] = useState(option.default);
+  useEffect(() => {
+    let current = true;
+    void perform(() =>
+      request<Option[]>({ kind: 'choices', connection_id: connectionId, option: option.key }),
+    ).then((c) => {
+      if (current) setChoices(c ?? 'failed');
+    });
+    return () => {
+      current = false;
+    };
+  }, [connectionId, option.key, perform]);
+  const all = Array.isArray(choices) ? choices : [];
+  const term = find.trim().toLowerCase();
+  const shown = all.filter(
+    (c) => c.value === value || !term || c.label.toLowerCase().includes(term),
+  );
+  return (
+    <Field label={option.label}>
+      {all.length > 12 && (
+        <input
+          className="cascade-find"
+          aria-label={`Find ${option.label.toLowerCase()}`}
+          placeholder="Find"
+          value={find}
+          onChange={(e) => {
+            setFind(e.target.value);
+            const t = e.target.value.trim().toLowerCase();
+            const first = all.find((c) => c.label.toLowerCase().includes(t));
+            if (t && first) setValue(first.value);
+          }}
+        />
+      )}
+      <select
+        name={option.key}
+        value={value}
+        disabled={!Array.isArray(choices)}
+        onChange={(e) => setValue(e.target.value)}
+      >
+        {choices === undefined && <option value={value}>Loading…</option>}
+        {choices === 'failed' && <option value="">Couldn’t list them</option>}
+        {shown.map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/**
+ * Makes a project for the new key, and waits until it can hold keys. Providers whose API
+ * can't make one send the person to their page, and the new one is picked up from the list.
+ */
 function NewProject({
   connectionId,
-  manifestName,
-  newResource,
+  manifest,
+  known,
   cancel,
   made,
   busy,
   perform,
 }: Pick<Controller, 'busy' | 'perform'> & {
   connectionId: string;
-  manifestName: string;
-  newResource: NewResource;
+  manifest: Manifest;
+  /** The account's projects before this one. */
+  known: Resource[];
   cancel: () => void;
   /** The account's projects now, and the new one once it can hold keys. */
   made: (all: Resource[], id?: string) => void;
 }) {
+  const newResource = manifest.new_resource!;
+  const { noun } = newResource;
+  const api = manifest.operations.includes('create_resource');
+  const hasOwners = api && manifest.operations.includes('list_owners');
+  const [onPage, setOnPage] = useState(!api);
   const [owners, setOwners] = useState<Owner[]>();
   const [name, setName] = useState('');
-  const [starting, setStarting] = useState('');
+  const [status, setStatus] = useState('');
   useEffect(() => {
+    if (!hasOwners) return;
     let current = true;
     void perform(() => request<Owner[]>({ kind: 'owners', connection_id: connectionId })).then(
       (o) => {
@@ -616,12 +690,57 @@ function NewProject({
     return () => {
       current = false;
     };
-  }, [connectionId, perform]);
+  }, [connectionId, hasOwners, perform]);
+  const site = newResource.page ? new URL(newResource.page).hostname.replace(/^www\./, '') : '';
+  const openPage = () =>
+    void perform(() =>
+      request<string>({ kind: 'open_resource_page', plugin_id: manifest.id }),
+    ).then((url) => {
+      if (url) setOnPage(true);
+    });
+  /** Picks up what the person made on the provider's page. */
+  const pickUp = () =>
+    void perform(
+      async () => {
+        const all = await request<Resource[]>({ kind: 'resources', connection_id: connectionId });
+        const fresh = all.filter((r) => !known.some((k) => k.id === r.id));
+        if (!fresh.length) throw `No new ${noun} yet. Create it on ${site}, then try again.`;
+        made(all, fresh.length === 1 ? fresh[0].id : undefined);
+        return fresh;
+      },
+      (fresh) => (fresh.length === 1 ? `Found ${fresh[0].name || fresh[0].id}` : undefined),
+    );
+
+  if (onPage)
+    return (
+      <div className="new-project" role="group" aria-label={`New ${noun}`}>
+        <p className="small-text quiet">
+          Create the {noun} on {site}, then come back here. GetKeys picks it up.
+        </p>
+        <div className="button-row">
+          <button
+            type="button"
+            className="button outline small"
+            disabled={busy}
+            onClick={api ? () => setOnPage(false) : cancel}
+          >
+            Back
+          </button>
+          <button type="button" className="button outline small" disabled={busy} onClick={openPage}>
+            Open {site} <ArrowUpRight size={13} />
+          </button>
+          <button type="button" className="button small" disabled={busy} onClick={pickUp}>
+            I’ve created it
+          </button>
+        </div>
+      </div>
+    );
+
   const project = slug(name).replace(/[-._]+$/, '');
   return (
     <form
       className="new-project"
-      aria-label={`New ${newResource.noun}`}
+      aria-label={`New ${noun}`}
       onSubmit={(e) => {
         e.preventDefault();
         const data = new FormData(e.currentTarget);
@@ -629,6 +748,8 @@ function NewProject({
           newResource.options.map((o) => [o.key, String(data.get(o.key) ?? o.default)]),
         );
         let saved = '';
+        let note = '';
+        setStatus(`Creating ${project}. This can take a minute.`);
         void perform(
           async () => {
             const c = await request<Created>({
@@ -639,27 +760,35 @@ function NewProject({
               options,
             });
             saved = c.generated?.name ?? '';
-            let all: Resource[] = [c.resource];
+            note = c.resource.note;
+            let all: Resource[] = [...known, c.resource];
             for (let i = 0; c.resource.pending; i++) {
               if (i >= waiting.tries) {
                 made(all);
                 throw `${project} is still starting. Try New key again in a few minutes.`;
               }
-              setStarting(`Starting ${project}. This takes a minute or two.`);
+              setStatus(`Starting ${project}. This takes a minute or two.`);
               await sleep(waiting.every);
               all = await request<Resource[]>({ kind: 'resources', connection_id: connectionId });
               if (all.some((r) => r.id === c.resource.id && !r.pending)) break;
             }
+            if (!c.resource.pending)
+              all = await request<Resource[]>({
+                kind: 'resources',
+                connection_id: connectionId,
+              }).catch(() => all);
             if (!all.some((r) => r.id === c.resource.id)) all = [...all, c.resource];
             made(all, c.resource.id);
             return c;
           },
           () =>
-            saved ? `Created ${project}. Its ${saved} is saved as a key.` : `Created ${project}`,
-        ).finally(() => setStarting(''));
+            [`Created ${project}.`, saved && `Its ${saved} is saved as a key.`, note]
+              .filter(Boolean)
+              .join(' '),
+        ).finally(() => setStatus(''));
       }}
     >
-      <Field label={`${sentence(newResource.noun)} name`}>
+      <Field label={`${sentence(noun).replace(/^Iam\b/, 'IAM')} name`}>
         <input
           value={name}
           onChange={(e) => setName(slug(e.target.value))}
@@ -680,35 +809,47 @@ function NewProject({
           </select>
         </Field>
       )}
-      {newResource.options.map((o) => (
-        <Field key={o.key} label={o.label}>
-          <select name={o.key} defaultValue={o.default}>
-            {o.choices.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      ))}
-      {starting && (
+      {newResource.options.map((o) =>
+        o.listed ? (
+          <ListedOption key={o.key} {...{ connectionId, perform }} option={o} />
+        ) : (
+          <Field key={o.key} label={o.label}>
+            <select name={o.key} defaultValue={o.default}>
+              {o.choices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ),
+      )}
+      {status && (
         <p className="small-text quiet" role="status">
-          {starting}
+          {status}
         </p>
       )}
       {owners && owners.length === 0 && (
         <p className="small-text quiet">
-          This {manifestName} account has no organization to create it in.
+          This {manifest.name} account has no organization to create it in.
         </p>
       )}
       <div className="button-row">
         <button type="button" className="button outline small" disabled={busy} onClick={cancel}>
           Back
         </button>
-        <button className="button small" disabled={busy || !project || !owners?.length}>
-          Create {newResource.noun}
+        <button
+          className="button small"
+          disabled={busy || !project || (hasOwners && !owners?.length)}
+        >
+          Create {noun}
         </button>
       </div>
+      {site && (
+        <button type="button" className="text-button" disabled={busy} onClick={openPage}>
+          Create it on {site} instead
+        </button>
+      )}
     </form>
   );
 }

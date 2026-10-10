@@ -13,6 +13,36 @@ pub struct Created {
 }
 
 impl App {
+    /// The account's choices for a `listed` option of a new resource, such as its IAM policies.
+    pub fn choices(&self, connection_id: &str, option: &str) -> Result<Vec<Choice>> {
+        let Outcome::Choices(choices) = self.execute(
+            connection_id,
+            Operation::ListChoices {
+                option: option.into(),
+            },
+            None,
+            None,
+        )?
+        else {
+            bail!("Provider did not return its choices")
+        };
+        Ok(choices)
+    }
+    /// The provider's page for making a new resource by hand, for providers whose API can't.
+    pub fn resource_page(&self, plugin_id: &str) -> Result<String> {
+        let manifest = self.manifest(plugin_id)?;
+        let page = manifest
+            .new_resource
+            .map(|r| r.page)
+            .filter(|p| p.starts_with("https://"))
+            .unwrap_or_else(|| manifest.homepage.clone());
+        ensure!(
+            page.starts_with("https://"),
+            "{} has no page for this",
+            manifest.name
+        );
+        Ok(page)
+    }
     /// Accounts and organisations a connection can make new resources in.
     pub fn owners(&self, connection_id: &str) -> Result<Vec<Owner>> {
         let Outcome::Owners(owners) =

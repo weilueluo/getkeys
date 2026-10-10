@@ -168,8 +168,33 @@ beforeEach(() => {
           ? [{ id: 'personal-org', name: 'Personal' }]
           : [{ id: '', name: 'luo' }];
     }
+    if (command.kind === 'choices')
+      return command.option === 'policy'
+        ? [
+            { value: '', label: 'No permissions' },
+            { value: 'arn:aws:iam::123456789012:policy/app-s3', label: 'app-s3' },
+            {
+              value: 'arn:aws:iam::aws:policy/ReadOnlyAccess',
+              label: 'ReadOnlyAccess (AWS managed)',
+            },
+          ]
+        : [
+            { value: '', label: 'No group' },
+            { value: 'developers', label: 'developers' },
+          ];
+    if (command.kind === 'open_resource_page') {
+      resources = [...resources, resource({ id: 'made-on-page', name: 'made-on-page' })];
+      return 'https://supabase.com/dashboard/new';
+    }
     if (command.kind === 'create_resource') {
       const plugin = snapshot.connections.find((c) => c.id === command.connection_id)!.plugin_id;
+      if (plugin === 'official.aws') {
+        resources.push(resource({ id: command.name, name: command.name, kind: 'iam_user' }));
+        return {
+          resource: resource({ id: command.name, name: command.name, kind: 'iam_user' }),
+          generated: null,
+        };
+      }
       if (plugin === 'official.github')
         return {
           resource: resource({
@@ -701,6 +726,100 @@ describe('GetKeys workflows', () => {
         name: 'App server',
       }),
     );
+  });
+  it('makes a key for a new IAM user with an existing policy and group', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.plugins[1].installed = true;
+    snapshot.connections.push({
+      id: 'aws',
+      plugin_id: 'official.aws',
+      name: '123456789012',
+      state: 'connected',
+      config: {},
+      source: 'aws_sso',
+    });
+    resources = [resource({ id: 'deploy', name: 'deploy', kind: 'iam_user' })];
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^AWS/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /New IAM user/ }));
+    const form = within(dialog).getByRole('form', { name: 'New IAM user' });
+    fireEvent.change(within(form).getByLabelText('IAM user name'), {
+      target: { value: 'ci-bot' },
+    });
+    await waitFor(() =>
+      expect(within(form).getByRole('option', { name: 'app-s3' })).toBeInTheDocument(),
+    );
+    fireEvent.change(within(form).getByLabelText('Permissions'), {
+      target: { value: 'arn:aws:iam::123456789012:policy/app-s3' },
+    });
+    await waitFor(() =>
+      expect(within(form).getByRole('option', { name: 'developers' })).toBeInTheDocument(),
+    );
+    fireEvent.change(within(form).getByLabelText('Group'), { target: { value: 'developers' } });
+    // AWS has no organizations to choose from.
+    expect(commands().some((c) => c.kind === 'owners')).toBe(false);
+    await enabled(within(form).getByRole('button', { name: 'Create IAM user' }));
+    expect(await screen.findByText('Created ci-bot.')).toBeInTheDocument();
+    expect(commands()).toContainEqual({
+      kind: 'create_resource',
+      connection_id: 'aws',
+      owner: '',
+      name: 'ci-bot',
+      options: { policy: 'arn:aws:iam::123456789012:policy/app-s3', group: 'developers' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'CI' } });
+    await enabled(within(dialog).getByRole('button', { name: 'Create key' }));
+    await waitFor(() =>
+      expect(commands()).toContainEqual({
+        kind: 'create',
+        connection_id: 'aws',
+        resource: 'ci-bot',
+        name: 'CI',
+      }),
+    );
+  });
+  it('picks up a project made on the provider page', async () => {
+    snapshot = connectedSnapshot();
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supabase/ }));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /New project/ }));
+    await enabled(
+      within(dialog).getByRole('button', { name: 'Create it on supabase.com instead' }),
+    );
+    const group = await within(dialog).findByRole('group', { name: 'New project' });
+    expect(commands()).toContainEqual({
+      kind: 'open_resource_page',
+      plugin_id: 'official.supabase',
+    });
+    await enabled(within(group).getByRole('button', { name: 'I’ve created it' }));
+    expect(await screen.findByText('Found made-on-page')).toBeInTheDocument();
+    expect(within(dialog).getByText('made-on-page')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Name')).toBeInTheDocument();
+  });
+  it('asks nothing more for providers whose keys belong to the account', async () => {
+    snapshot = connectedSnapshot();
+    snapshot.plugins[0].installed = true;
+    snapshot.connections.push({
+      id: 'github',
+      plugin_id: 'official.github',
+      name: 'octocat',
+      state: 'connected',
+      config: {},
+      source: 'gh',
+    });
+    render(<App />);
+    await enabled(await screen.findByRole('button', { name: 'New key' }));
+    const dialog = screen.getByRole('dialog', { name: 'New key' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^GitHub/ }));
+    // Reconnecting is what Refresh is for, so there is no "Another account" here.
+    expect(within(dialog).queryByRole('button', { name: /Another account/ })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: /Make it on GitHub/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('group', { name: 'Repository' })).toBeNull();
+    expect(commands().some((c) => c.kind === 'resources')).toBe(false);
   });
   it('offers to connect an account when the provider has none', async () => {
     snapshot = connectedSnapshot();

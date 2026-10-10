@@ -57,7 +57,12 @@ pub struct Manifest {
     /// Where this provider's keys and sign-ins live on a device.
     #[serde(default)]
     pub sources: Vec<Source>,
-    /// What GetKeys can create in the account, for providers with `create_resource`.
+    /// Keys belong to the account itself rather than to one of its resources, so New key
+    /// doesn't ask where a key goes. Resources are still listed, for their inventory.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub account_keys: bool,
+    /// What the provider's keys belong to, and how a new one is made: through
+    /// `create_resource`, or on the provider's `page` when its API can't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_resource: Option<NewResource>,
 }
@@ -75,6 +80,9 @@ pub struct NewResource {
     /// such as a database password. The provider code never sees it.
     #[serde(default)]
     pub generated: Option<ConfigField>,
+    /// Provider page where a person makes one, for providers whose API can't.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub page: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
@@ -82,8 +90,13 @@ pub struct NewResource {
 pub struct ResourceOption {
     pub key: String,
     pub label: String,
+    #[serde(default)]
     pub choices: Vec<Choice>,
+    #[serde(default)]
     pub default: String,
+    /// The choices come from the account, through `list_choices`, rather than `choices`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub listed: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, TS)]
@@ -272,6 +285,8 @@ pub enum OperationKind {
     ListOwners,
     /// Creates a repository or project.
     CreateResource,
+    /// Lists the account's choices for a `listed` option of a new resource.
+    ListChoices,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -321,6 +336,10 @@ pub enum Operation {
         #[serde(default)]
         options: BTreeMap<String, String>,
     },
+    /// The choices for the new resource option `option`.
+    ListChoices {
+        option: String,
+    },
 }
 
 impl Operation {
@@ -339,6 +358,7 @@ impl Operation {
             Self::Guide { .. } => OperationKind::Guide,
             Self::ListOwners => OperationKind::ListOwners,
             Self::CreateResource { .. } => OperationKind::CreateResource,
+            Self::ListChoices { .. } => OperationKind::ListChoices,
         }
     }
     pub fn mutates(&self) -> bool {
@@ -383,6 +403,14 @@ pub struct HttpRequest {
     pub form: BTreeMap<String, String>,
     pub auth: RequestAuth,
     pub secret: Option<SecretInjection>,
+    /// Milliseconds to wait before sending, to poll something the provider is still making.
+    /// The host waits at most ten seconds.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub wait_ms: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -427,6 +455,7 @@ pub enum Outcome {
     Guide { url: String, message: String },
     Owners(Vec<Owner>),
     Resource(Resource),
+    Choices(Vec<Choice>),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, TS)]
@@ -494,6 +523,7 @@ pub fn get(url: String) -> HttpRequest {
         form: BTreeMap::new(),
         auth: RequestAuth::Connection,
         secret: None,
+        wait_ms: 0,
     }
 }
 

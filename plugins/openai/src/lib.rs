@@ -104,7 +104,10 @@ fn key(k: &Value, resource: &str) -> Result<RemoteCredential, &'static str> {
 
 fn execute(call: Call) -> Result<Step, &'static str> {
     if let Some(response) = &call.response {
-        if let Some(error) = provider_error(response) {
+        let named = matches!(call.operation, Operation::CreateResource { .. })
+            .then(|| name_error(response, "project"))
+            .flatten();
+        if let Some(error) = named.or_else(|| provider_error(response)) {
             return Ok(error);
         }
         match &call.operation {
@@ -164,6 +167,12 @@ fn execute(call: Call) -> Result<Step, &'static str> {
             });
         }
         return Ok(match &call.operation {
+            Operation::CreateResource { .. } => done(Outcome::Resource(Resource {
+                id: v["id"].as_str().ok_or("id")?.into(),
+                name: v["name"].as_str().ok_or("name")?.into(),
+                kind: "project".into(),
+                ..Default::default()
+            })),
             Operation::CreateCredential { resource, .. } => {
                 let created = if resource == ADMIN {
                     v.clone()
@@ -204,6 +213,11 @@ fn execute(call: Call) -> Result<Step, &'static str> {
         return Ok(request(page(&path, None), json!({"items": []})));
     }
     let req = match &call.operation {
+        Operation::CreateResource { name, .. } => send(
+            get(format!("{API}/organization/projects")),
+            "POST",
+            Some(json!({"name": name})),
+        ),
         Operation::ValidateCredential { resource } => {
             let mut r = if resource.is_empty() || resource == ADMIN {
                 get(format!("{API}/organization/projects?limit=1"))
@@ -410,6 +424,31 @@ mod tests {
                 result: Outcome::Done
             }
         ));
+    }
+    #[test]
+    fn creates_projects() {
+        let op = Operation::CreateResource {
+            owner: String::new(),
+            name: "my-app".into(),
+            options: BTreeMap::new(),
+        };
+        let Step::Request { request, .. } = call(op.clone(), Value::Null, None) else {
+            panic!()
+        };
+        assert_eq!(request.method, "POST");
+        assert!(request.url.ends_with("/v1/organization/projects"));
+        assert_eq!(request.body.unwrap()["name"], "my-app");
+        let Step::Complete {
+            result: Outcome::Resource(r),
+        } = call(
+            op,
+            Value::Null,
+            Some(json!({"id":"proj_9","object":"organization.project","name":"my-app"})),
+        )
+        else {
+            panic!()
+        };
+        assert_eq!((r.id.as_str(), r.kind.as_str()), ("proj_9", "project"));
     }
     #[test]
     fn validation_uses_the_candidate_key() {
