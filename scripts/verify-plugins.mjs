@@ -29,7 +29,9 @@ for (const name of names) {
   const manifest = JSON.parse(readFileSync(`plugins/${name}/manifest.json`, 'utf8'));
   const signed = catalog.packages.find((p) => p.manifest.id === manifest.id);
   if (!signed || !same(manifest, signed.manifest)) throw stale(manifest.id);
-  if (compiled.has(name)) {
+  // Bundles are built and signed on Windows: the wasm embeds host source paths, so only a Windows
+  // build reproduces their bytes. Other platforms still compile them and check the manifests.
+  if (compiled.has(name) && process.platform === 'win32') {
     const bytes = readFileSync(
       `target/wasm32-unknown-unknown/release/getkeys_plugin_${name.replaceAll('-', '_')}.wasm`,
     );
@@ -39,4 +41,8 @@ for (const name of names) {
 }
 if (catalog.packages.length !== names.length)
   throw new Error('The signed catalog lists removed providers.');
-console.log('Signed provider bundles match the source build.');
+console.log(
+  process.platform === 'win32'
+    ? 'Signed provider bundles match the source build.'
+    : 'Signed provider manifests match the source; bundle bytes are verified on Windows.',
+);
