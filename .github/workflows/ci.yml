@@ -185,6 +185,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - run: npm run extensions:test
       - run: npm run extensions:build
       - name: Collect the extensions and the signed provider registry
         run: |

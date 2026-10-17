@@ -252,7 +252,7 @@
         }
       },
       "wasm": "official.aws-0.2.0.wasm",
-      "sha256": "03ea456514b29e5abefa3c916dbe45e4d2d500ed16e78aecd06e8e50cf37789a"
+      "sha256": "576c270b5d151c5e5c6a2a96df48fd8af948f55e517e9aad4cb737591cbeff63"
     },
     {
       "manifest": {
@@ -435,6 +435,79 @@
       },
       "wasm": "",
       "sha256": "05023a182f17f41297c9778598b4783987be9575bf3d1f75828230fc36725f8c"
+    },
+    {
+      "manifest": {
+        "id": "official.digitalocean",
+        "name": "DigitalOcean",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Find DigitalOcean tokens from doctl or your environment and check them with account:read access.",
+        "homepage": "https://www.digitalocean.com",
+        "kind": "declarative",
+        "category": "cloud",
+        "hosts": [
+          "api.digitalocean.com"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "Access token",
+            "placeholder": "dop_v1_…",
+            "required": true,
+            "secret": true,
+            "env": "DIGITALOCEAN_ACCESS_TOKEN"
+          }
+        ],
+        "account_fields": [],
+        "token_page": "https://cloud.digitalocean.com/account/api/tokens",
+        "account_credentials": false,
+        "key_pattern": "^do[po]_v1_[a-f0-9]{64}$",
+        "validate": {
+          "url": "https://api.digitalocean.com/v2/account",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "DIGITALOCEAN_ACCESS_TOKEN"
+          },
+          {
+            "id": "",
+            "label": "",
+            "role": "key",
+            "field": "token",
+            "kind": "env",
+            "var": "DIGITALOCEAN_TOKEN"
+          },
+          {
+            "id": "doctl",
+            "label": "DigitalOcean CLI",
+            "role": "key",
+            "field": "token",
+            "kind": "command",
+            "argv": [
+              "doctl",
+              "auth",
+              "token"
+            ]
+          }
+        ]
+      },
+      "wasm": "",
+      "sha256": "df87a39e7a3153a9d709da52a786de394426ac7611535e7f8256d40893c0f7c6"
     },
     {
       "manifest": {
@@ -946,6 +1019,80 @@
       },
       "wasm": "",
       "sha256": "71b512cf54bfa642ea35579f6c4091a8694c3dc63446e43f4b7067ef505e5453"
+    },
+    {
+      "manifest": {
+        "id": "official.neon",
+        "name": "Neon",
+        "publisher": "getkeys",
+        "version": "0.1.0",
+        "description": "Connect with a personal API key to list, create, rotate and revoke organization API keys.",
+        "homepage": "https://neon.com",
+        "kind": "managed",
+        "category": "database",
+        "hosts": [
+          "console.neon.tech"
+        ],
+        "auth": {
+          "kind": "token"
+        },
+        "operations": [
+          "identity",
+          "list_resources",
+          "list_credentials",
+          "create_credential",
+          "validate_credential",
+          "revoke_credential"
+        ],
+        "fields": [],
+        "credential_fields": [
+          {
+            "key": "token",
+            "label": "API key",
+            "placeholder": "napi_…",
+            "required": true,
+            "secret": true,
+            "env": "NEON_API_KEY"
+          }
+        ],
+        "account_fields": [
+          {
+            "key": "token",
+            "label": "Personal API key of an organization admin",
+            "placeholder": "napi_…",
+            "required": true,
+            "secret": true,
+            "env": "NEON_API_KEY"
+          }
+        ],
+        "token_page": "https://console.neon.tech/app/settings/api-keys",
+        "account_credentials": false,
+        "key_pattern": "^napi_[A-Za-z0-9_-]{20,}$",
+        "validate": {
+          "url": "https://console.neon.tech/api/v2/auth",
+          "header": "Authorization",
+          "prefix": "Bearer ",
+          "field": "token",
+          "headers": {}
+        },
+        "sources": [
+          {
+            "id": "",
+            "label": "",
+            "role": "account",
+            "field": "token",
+            "kind": "env",
+            "var": "NEON_API_KEY"
+          }
+        ],
+        "new_resource": {
+          "noun": "organization",
+          "options": [],
+          "generated": null
+        }
+      },
+      "wasm": "official.neon-0.1.0.wasm",
+      "sha256": "b1e005da23c3e531f56f6a098664f259b9431715cba06612098f67c629840e34"
     },
     {
       "manifest": {

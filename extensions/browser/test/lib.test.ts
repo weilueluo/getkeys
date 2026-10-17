@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   Deduper,
   classifyNativeError,
@@ -121,6 +122,34 @@ describe('findSecrets', () => {
     expect(
       Object.fromEntries(findSecrets(text, shipped).map((m) => [m.provider, m.value])),
     ).toEqual(keys);
+  });
+
+  it('recognises Neon and DigitalOcean keys without capturing OAuth refresh tokens', () => {
+    const shipped = compilePatterns(
+      ['neon', 'digitalocean'].map((provider) => {
+        const manifest = JSON.parse(
+          readFileSync(
+            new URL(`../../../plugins/${provider}/manifest.json`, import.meta.url),
+            'utf8',
+          ),
+        );
+        return { provider: manifest.id, name: manifest.name, pattern: manifest.key_pattern };
+      }),
+    );
+    const neon = `napi_${'aB3dE6gH9jK2mN5pQ8sT1vW4xY7z'.repeat(2)}`;
+    const suffix = '0a1b2c3d4e5f6789'.repeat(4);
+    const personal = `dop_v1_${suffix}`;
+    const oauth = `doo_v1_${suffix}`;
+    const refresh = `dor_v1_${suffix}`;
+    const text = [neon, personal, oauth, refresh]
+      .map((value, i) => `KEY_${i}="${value}"`)
+      .join('\n');
+    expect(findSecrets(text, shipped).map(({ provider, value }) => ({ provider, value }))).toEqual([
+      { provider: 'official.neon', value: neon },
+      { provider: 'official.digitalocean', value: personal },
+      { provider: 'official.digitalocean', value: oauth },
+    ]);
+    expect(findSecrets(`dop_v1_${suffix.slice(1)}`, shipped)).toEqual([]);
   });
 });
 

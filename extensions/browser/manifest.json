@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GetKeys",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Save API keys shown on provider dashboards straight into GetKeys on this computer.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtCE1YVikRnA70vlQ/1DS2IqBGXUvYuEV7N5XVqvTOuFGUuryIpCp0RYKPXQwwpGgZdv/i4Mr8ESkbkWjWHfBd2TIorRnNM1MYUZJFcGC9zN42zXg1J8Vj3AbFQfaIYu453KgE8T6/aQXPypVYEjWc9Hs4Em4Po1VuI/bvgyMAKITTNrxEaAVmqGExYhQi1syp1Gd5Kpbpx9w3fdSLXKScd+UAR3UOnuQA255kO7ctv7QtmqgvG63GPaVOPcQE61DLwhw5HPli6VWLHNgvMnZxpKELBbOkdL7ov0suY9FmXYsQNj+C+JnScd+aFfPkHdxYMWrEN7lQffZoatRcqwaDQIDAQAB",
   "minimum_chrome_version": "121",

@@ -13,6 +13,18 @@ Sessions are read only when you add a provider or refresh keys, and each account
 
 If no session works, **Add** opens a dialog with a link to the provider's token page; create a token there and paste it. Once an account is added, its management key is listed under the provider in **Providers**; a key found on this device is listed under **Keys** as well. For Vercel, **Create dedicated key** swaps the CLI session for a token GetKeys creates and later rotates.
 
+## Neon
+
+Connect with a **personal API key** from [Account settings → API keys](https://console.neon.tech/app/settings/api-keys), or set `NEON_API_KEY`. The personal key must belong to an admin of the organizations whose keys you want to manage. GetKeys lists your organizations and their API keys, saves newly created values, and can create, rotate and revoke organization-wide keys. Keys export as `NEON_API_KEY`.
+
+Project-scoped organization keys are listed and can be revoked, but cannot be created or automatically rotated here: a replacement must preserve their project scope. Existing key values are unavailable from the API; only keys created in GetKeys have a saved value. The personal key used to connect stays separate from the organization keys it manages. Personal-key management and database passwords are outside this integration's scope. See [Neon's API key documentation](https://neon.com/docs/manage/api-keys) and [organization key API](https://neon.com/docs/reference/api/organizations/create-org-api-key).
+
+## DigitalOcean
+
+Add DigitalOcean to find `DIGITALOCEAN_ACCESS_TOKEN`, `DIGITALOCEAN_TOKEN`, and the active [doctl authentication context](https://docs.digitalocean.com/reference/doctl/reference/auth/token/). You can also paste a token. GetKeys stores these as keys and exports them as `DIGITALOCEAN_ACCESS_TOKEN`; **New key** and deletion open the [DigitalOcean token page](https://cloud.digitalocean.com/account/api/tokens).
+
+Validation calls `GET /v2/account`, so tokens need the `account:read` scope (included in read-only and full-access tokens). A token missing that scope will fail this check even if it can access another resource. The integration recognizes personal and OAuth access tokens, excluding OAuth refresh tokens and Spaces access keys. Token creation, rotation and revocation happen in DigitalOcean. See [personal access tokens and scopes](https://docs.digitalocean.com/reference/api/create-personal-access-token/).
+
 ## Browser sign-in (optional)
 
 Browser sign-in appears only when its registration is configured. Set environment variables before launching GetKeys. Restart after changing them. `.env` is ignored by Git and is not loaded automatically. For local development, copy `.env.example` to `.env` and launch with:

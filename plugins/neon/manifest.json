@@ -1,0 +1,42 @@
+{
+  "id": "official.neon",
+  "name": "Neon",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Connect with a personal API key to list, create, rotate and revoke organization API keys.",
+  "homepage": "https://neon.com",
+  "category": "database",
+  "hosts": ["console.neon.tech"],
+  "operations": [
+    "identity",
+    "list_resources",
+    "list_credentials",
+    "create_credential",
+    "validate_credential",
+    "revoke_credential"
+  ],
+  "fields": [],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "API key",
+      "placeholder": "napi_…",
+      "required": true,
+      "env": "NEON_API_KEY"
+    }
+  ],
+  "account_fields": [
+    {
+      "key": "token",
+      "label": "Personal API key of an organization admin",
+      "placeholder": "napi_…",
+      "required": true,
+      "env": "NEON_API_KEY"
+    }
+  ],
+  "token_page": "https://console.neon.tech/app/settings/api-keys",
+  "key_pattern": "^napi_[A-Za-z0-9_-]{20,}$",
+  "validate": { "url": "https://console.neon.tech/api/v2/auth" },
+  "sources": [{ "kind": "env", "var": "NEON_API_KEY" }],
+  "new_resource": { "noun": "organization" }
+}

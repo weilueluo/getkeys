@@ -30,7 +30,7 @@ GetKeys lets you create, rotate, copy, and revoke keys without visiting a single
 
 ## Supported providers
 
-GitHub · AWS · Vercel · Supabase · OpenAI · Anthropic · Gemini · OpenRouter · Cloudflare · GitLab · Groq · Together AI · Mistral AI · DeepSeek · xAI · Cohere · Fireworks AI · Perplexity · Replicate · Hugging Face · Stripe · Resend
+GitHub · AWS · Vercel · Supabase · OpenAI · Anthropic · Gemini · OpenRouter · Cloudflare · GitLab · Groq · Together AI · Mistral AI · DeepSeek · xAI · Cohere · Fireworks AI · Perplexity · Replicate · Hugging Face · Stripe · Resend · Neon · DigitalOcean
 
 Plus **any other service**: paste `NAME=value` pairs and GetKeys keeps them alongside the rest.
 

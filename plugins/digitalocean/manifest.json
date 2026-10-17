@@ -1,0 +1,34 @@
+{
+  "id": "official.digitalocean",
+  "name": "DigitalOcean",
+  "publisher": "getkeys",
+  "version": "0.1.0",
+  "description": "Find DigitalOcean tokens from doctl or your environment and check them with account:read access.",
+  "homepage": "https://www.digitalocean.com",
+  "kind": "declarative",
+  "category": "cloud",
+  "hosts": ["api.digitalocean.com"],
+  "credential_fields": [
+    {
+      "key": "token",
+      "label": "Access token",
+      "placeholder": "dop_v1_…",
+      "required": true,
+      "env": "DIGITALOCEAN_ACCESS_TOKEN"
+    }
+  ],
+  "token_page": "https://cloud.digitalocean.com/account/api/tokens",
+  "key_pattern": "^do[po]_v1_[a-f0-9]{64}$",
+  "validate": { "url": "https://api.digitalocean.com/v2/account" },
+  "sources": [
+    { "kind": "env", "var": "DIGITALOCEAN_ACCESS_TOKEN", "role": "key" },
+    { "kind": "env", "var": "DIGITALOCEAN_TOKEN", "role": "key" },
+    {
+      "id": "doctl",
+      "label": "DigitalOcean CLI",
+      "kind": "command",
+      "argv": ["doctl", "auth", "token"],
+      "role": "key"
+    }
+  ]
+}

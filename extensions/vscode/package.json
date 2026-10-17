@@ -2,7 +2,7 @@
   "name": "getkeys",
   "displayName": "GetKeys",
   "description": "Browse your GetKeys keys, insert getkeys:// references, write .env files and run tasks with keys injected.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "getkeys",
   "license": "MIT",
   "private": true,

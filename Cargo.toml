@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/plugin-api", "crates/core", "apps/cli", "apps/desktop/src-tauri", "plugins/github", "plugins/aws", "plugins/vercel", "plugins/supabase", "plugins/openai", "plugins/anthropic", "plugins/gemini", "plugins/openrouter", "plugins/cloudflare", "plugins/gitlab", "services/auth-broker", "tools/xtask"]
+members = ["crates/plugin-api", "crates/core", "apps/cli", "apps/desktop/src-tauri", "plugins/github", "plugins/aws", "plugins/vercel", "plugins/supabase", "plugins/openai", "plugins/anthropic", "plugins/gemini", "plugins/openrouter", "plugins/cloudflare", "plugins/gitlab", "plugins/neon", "services/auth-broker", "tools/xtask"]
 default-members = ["crates/plugin-api", "crates/core", "apps/cli", "services/auth-broker", "tools/xtask"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.99"
